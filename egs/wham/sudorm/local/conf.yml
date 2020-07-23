@@ -1,25 +1,17 @@
-# Filterbank config
-filterbank:
-  n_filters: 64
-  kernel_size: 4
-  stride: 2
-# Network config
-masknet:
-  bidirectional: True
-  bn_chan: 128
-  chunk_size: 200
-  dropout: 0
-  hid_size: 128
-  hop_size: 100
-  in_chan: 64
-  mask_act: sigmoid
-  n_repeats: 6
-  out_chan: 64
+# Model config
+# Best model:
+model:
+  out_channels: 512
+  in_channels: 512
+  num_blocks: 34
+  upsampling_depth: 5
+  enc_kernel_size: 21
+  enc_num_basis: 512
 # Training config
 training:
   epochs: 200
-  batch_size: 5
-  num_workers: 2
+  batch_size: 4
+  num_workers: 4
   half_lr: yes
   early_stop: yes
   gradient_clipping: 5
@@ -27,7 +19,6 @@ training:
 optim:
   optimizer: adam
   lr: 0.0005
-  weight_decay: !!float 1e-5
 # Data config
 data:
   task: enh_single

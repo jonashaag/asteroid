@@ -14,20 +14,24 @@ masknet:
 # Training config
 training:
   epochs: 200
-  batch_size: 8
+  batch_size: 10
   num_workers: 4
   half_lr: yes
   early_stop: yes
+  gradient_clipping: 5
 # Optim config
 optim:
   optimizer: adam
-  lr: 0.001
-  weight_decay: 0.
+  lr: 0.0005
+  weight_decay: !!float 1e-5
 # Data config
 data:
-  train_dir: data/wav8k/min/tr/
-  valid_dir: data/wav8k/min/cv/
-  task: sep_clean
+  task: enh_single
   nondefault_nsrc:
   sample_rate: 8000
   mode: min
+  segment: 2.0
+  train_clean_dir: ''
+  train_noisy_dir: ''
+  test_clean_dir: ''
+  test_noisy_dir: ''

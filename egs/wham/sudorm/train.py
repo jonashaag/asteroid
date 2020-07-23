@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
-from asteroid import DPRNNTasNet
+from asteroid.models.sudormrf import SuDORMRFImproved
 from asteroid.data.vbd_dataset import VBDDataset
 from asteroid.engine.optimizers import make_optimizer
 from asteroid.engine.system import System
@@ -44,9 +44,9 @@ def main(conf):
                             num_workers=conf['training']['num_workers'],
                             drop_last=True)
     # Update number of source values (It depends on the task)
-    conf['masknet'].update({'n_src': train_set.n_src})
+    conf['model'].update({'num_sources': train_set.n_src})
 
-    model = DPRNNTasNet(**conf['filterbank'], **conf['masknet'])
+    model = SuDORMRFImproved(**conf['model'])
     optimizer = make_optimizer(model.parameters(), **conf['optim'])
     # Define scheduler
     scheduler = None
