@@ -1,40 +1,41 @@
 # Filterbank config
 filterbank:
   n_filters: 64
-  kernel_size: 2
-  stride: 1
+  kernel_size: 4
+  stride: 2
 # Network config
 masknet:
-  in_chan: 64
-  n_src: 2
-  out_chan: 64
+  bidirectional: True
   bn_chan: 128
-  hid_size: 128
-  chunk_size: 250
-  hop_size: 125
-  n_repeats: 6
-  mask_act: 'sigmoid'
-  bidirectional: true
+  chunk_size: 200
   dropout: 0
+  hid_size: 128
+  hop_size: 100
+  in_chan: 64
+  mask_act: sigmoid
+  n_repeats: 6
+  out_chan: 64
 # Training config
 training:
   epochs: 200
-  batch_size: 4
-  num_workers: 4
+  batch_size: 5
+  num_workers: 1
   half_lr: yes
   early_stop: yes
   gradient_clipping: 5
 # Optim config
 optim:
   optimizer: adam
-  lr: 0.001
+  lr: 0.0005
   weight_decay: !!float 1e-5
 # Data config
 data:
-  train_dir: data/wav8k/min/tr/
-  valid_dir: data/wav8k/min/cv/
-  task: sep_clean
+  task: enh_single
   nondefault_nsrc:
   sample_rate: 8000
   mode: min
   segment: 2.0
+  train_clean_dir: ''
+  train_noisy_dir: ''
+  test_clean_dir: ''
+  test_noisy_dir: ''

@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import soundfile as sf
 
 try:
@@ -17,10 +18,23 @@ class MixFilesDataset(torch.utils.data.Dataset):
         resample_args (dict, optional): Arguments passed to `librosa.core.resample`.
     """
 
-    def __init__(self, file_pairs, sr=None, resample_args=None):
-        self.file_pairs = file_pairs
+    def __init__(self, file_pairs, segment=None, sr=None, resample_args=None):
+        if segment is None:
+            seg_len = None
+        else:
+            if sr is None:
+                raise ValueError("Must pass 'sr' if 'segment' is not None")
+            seg_len = int(segment * sr)
+            ok_file_pairs = []
+            for mixture, sources in file_pairs:
+                if self._quick_get_file_len(mixture) >= seg_len:
+                    ok_file_pairs.append((mixture, sources))
+            print(f"Dropped {len(file_pairs) - len(ok_file_pairs)}/{len(file_pairs)} utts that are too short")
+
+        self.file_pairs = ok_file_pairs
         self.sr = sr
         self.resample_args = resample_args
+        self.seg_len = seg_len
 
     def __len__(self):
         return len(self.file_pairs)
@@ -30,12 +44,18 @@ class MixFilesDataset(torch.utils.data.Dataset):
         Returns:
             mixture, vstack([source_arrays])
         """
-        mixture, sources = self.file_pairs[self.wav_ids[idx]]
-        mixture = torch.from_numpy(self._load_file(mixture))
-        sources = torch.stack(
-            [torch.from_numpy(self._load_file(source)) for source in sources]
-        )
-        return mixture, sources
+        mixture, sources = self.file_pairs[idx]
+        mixture = self._load_file(mixture)
+        sources = [self._load_file(s) for s in sources]
+        assert {len(mixture)} == set(map(len, sources)), self.file_pairs[idx]
+
+        if self.seg_len is not None:
+            rand_start = np.random.randint(0, max(1, len(mixture) - self.seg_len))
+            stop = rand_start + self.seg_len
+            mixture = mixture[rand_start:stop]
+            sources = [s[rand_start:stop] for s in sources]
+
+        return torch.from_numpy(mixture), torch.stack([torch.from_numpy(s) for s in sources])
 
     def _load_file(self, filename):
         data, sr = sf.read(filename, dtype="float32")
@@ -47,3 +67,7 @@ class MixFilesDataset(torch.utils.data.Dataset):
                     data, sr, self.sr, **(self.resample_args or {})
                 )
         return data
+
+    def _quick_get_file_len(self, filename):
+        with sf.SoundFile(filename) as f:
+            return f.frames

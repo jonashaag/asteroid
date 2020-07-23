@@ -4,37 +4,42 @@ import json
 import os
 import soundfile as sf
 import random
+import copy
+from .mix_files_dataset import MixFilesDataset
 
 
-class VBDDataset(data.Dataset):
+class VBDDataset(MixFilesDataset):
     dataset_name = "VBD"
+    n_src = 1
 
-    def __init__(self, clean_root, noisy_root, speakers_subset=None, **kwargs):
+    def __init__(self, clean_root, noisy_root, *args, **kwargs):
+        self.args = args
         self.kwargs = kwargs
         self.clean_root = clean_root
         self.noisy_root = noisy_root
-        self.speakers_subset = speakers_subset
+        self.speakers_subset = kwargs.pop('speakers_subset', None)
         self.clean_files = [(f, f.split("_")[0]) for f in os.listdir(clean_root)]
         self.noisy_files = [(f, f.split("_")[0]) for f in os.listdir(noisy_root)]
-
-        if speakers_subset is not None:
-            self.clean_files = [
-                (f, s) for f, s in self.clean_files if s in speakers_subset
-            ]
-            self.noisy_files = [
-                (f, s) for f, s in self.noisy_files if s in speakers_subset
-            ]
 
         if set(self.clean_files) != set(self.noisy_files):
             raise FileNotFoundError(
                 f"Some utterances are missing from clean or noisy: {set(self.clean_files) ^ set(self.noisy_files)}"
             )
 
-        files_pairs = [
+        file_pairs = [
             (os.path.join(clean_root, clean), [os.path.join(noisy_root, noisy)])
             for (clean, _), (noisy, _) in zip(self.clean_files, self.noisy_files)
         ]
-        super().__init__(files_pairs, **kwargs)
+        super().__init__(file_pairs, *args, **kwargs)
+
+        if self.speakers_subset is not None:
+            self.restrict_to_speakers_subset(self.speakers_subset)
+
+    def restrict_to_speakers_subset(self, speakers_subset):
+        include_mask = [s in speakers_subset for _, s in self.clean_files]
+        self.clean_files = [x for  x, include in zip(self.clean_files, include_mask) if include]
+        self.noisy_files = [x for  x, include in zip(self.noisy_files, include_mask) if include]
+        self.file_pairs = [x for  x, include in zip(self.file_pairs, include_mask) if include]
 
     def get_speakers_split(self, ratio, random_seed=0):
         speakers = list(set(s for _, s in self.clean_files))
@@ -44,16 +49,12 @@ class VBDDataset(data.Dataset):
         split1_idxs = set(
             random.sample(range(len(speakers)), int(len(speakers) * ratio))
         )
-        split1_speakers = [s for s, idx in enumerate(speakers) if idx in split1_idxs]
-        split2_speakers = [
-            s for s, idx in enumerate(speakers) if idx not in split1_idxs
-        ]
-        split1 = self.__class__(
-            self.clean_root, self.noisy_root, split1_speakers, **self.kwargs
-        )
-        split2 = self.__class__(
-            self.clean_root, self.noisy_root, split2_speakers, **self.kwargs
-        )
+        split1_speakers = [s for idx, s in enumerate(speakers) if idx in split1_idxs]
+        split2_speakers = [s for idx, s in enumerate(speakers) if idx not in split1_idxs]
+        split1 = copy.deepcopy(self)
+        split2 = copy.deepcopy(self)
+        split1.restrict_to_speakers_subset(split1_speakers)
+        split2.restrict_to_speakers_subset(split2_speakers)
         return split1, split2
 
     def get_train_val_split(self):
