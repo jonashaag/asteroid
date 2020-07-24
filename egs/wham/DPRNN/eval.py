@@ -18,32 +18,32 @@ from asteroid.utils import tensors_to_device
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--task', type=str, required=True,
-                    help='One of `enh_single`, `enh_both`, '
-                         '`sep_clean` or `sep_noisy`')
-parser.add_argument('--test_dir', type=str, required=True,
-                    help='Test directory including the json files')
-parser.add_argument('--use_gpu', type=int, default=0,
-                    help='Whether to use the GPU for model execution')
-parser.add_argument('--exp_dir', default='exp/tmp',
-                    help='Experiment root')
-parser.add_argument('--n_save_ex', type=int, default=50,
-                    help='Number of audio examples to save, -1 means all')
 
-compute_metrics = ['si_sdr', 'sdr', 'sir', 'sar', 'stoi']
+compute_metrics = ['si_sdr', 'stoi']
 
 
 def main(conf):
-    model_path = os.path.join(conf['exp_dir'], 'best_model.pth')
-    model = DPRNNTasNet.from_pretrained(model_path)
+    conf.update(conf['eval'])
+    conf['sample_rate'] = conf['data']['sample_rate']
+    from asteroid.data.vbd_dataset import VBDDataset
+    test_set = VBDDataset(
+        conf['data']['test_clean_dir'],
+        conf['data']['test_noisy_dir'],
+        sr=conf['data']['sample_rate']
+    )
+    model = DPRNNTasNet(
+        **conf["filterbank"], **conf["masknet"], n_src=1
+    )
+    checkpoint = torch.load(os.environ['M'])
+    model.load_state_dict(
+        {k.split(".", 1)[1]: v for k, v in checkpoint["state_dict"].items()}
+    )
+
     # Handle device placement
     if conf['use_gpu']:
         model.cuda()
     model_device = next(model.parameters()).device
-    test_set = WhamDataset(conf['test_dir'], conf['task'],
-                           sample_rate=conf['sample_rate'],
-                           nondefault_nsrc=model.masker.n_src,
-                           segment=None)  # Uses all segment length
+
     # Used to reorder sources only
     loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from='pw_mtx')
 
@@ -109,18 +109,22 @@ def main(conf):
     )
 
 if __name__ == '__main__':
-    args = parser.parse_args()
-    arg_dic = dict(vars(args))
+    import yaml
+    from pprint import pprint
+    from asteroid.utils import prepare_parser_from_dict, parse_args_as_dict
 
-    # Load training config
-    conf_path = os.path.join(args.exp_dir, 'conf.yml')
-    with open(conf_path) as f:
-        train_conf = yaml.safe_load(f)
-    arg_dic['sample_rate'] = train_conf['data']['sample_rate']
-    arg_dic['train_conf'] = train_conf
-
-    if args.task != arg_dic['train_conf']['data']['task']:
-        print("Warning : the task used to test is different than "
-              "the one from training, be sure this is what you want.")
-
+    # We start with opening the config file conf.yml as a dictionary from
+    # which we can create parsers. Each top level key in the dictionary defined
+    # by the YAML file creates a group in the parser.
+    with open('local/conf.yml') as f:
+        def_conf = yaml.safe_load(f)
+    parser = prepare_parser_from_dict(def_conf, parser=parser)
+    # Arguments are then parsed into a hierarchical dictionary (instead of
+    # flat, as returned by argparse) to facilitate calls to the different
+    # asteroid methods (see in main).
+    # plain_args is the direct output of parser.parse_args() and contains all
+    # the attributes in an non-hierarchical structure. It can be useful to also
+    # have it so we included it here but it is not used.
+    arg_dic, plain_args = parse_args_as_dict(parser, return_plain_args=True)
+    pprint(arg_dic)
     main(arg_dic)

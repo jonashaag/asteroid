@@ -12,7 +12,7 @@ from asteroid import ConvTasNet
 from asteroid.data.vbd_dataset import VBDDataset
 from asteroid.engine.optimizers import make_optimizer
 from asteroid.engine.system import System
-from asteroid.losses import PITLossWrapper, pairwise_mse
+from asteroid.losses import PITLossWrapper, pairwise_mse, pairwise_neg_sisdr
 
 # Keys which are not in the conf.yml file can be added here.
 # In the hierarchical dictionary created when parsing, the key `key` can be
@@ -61,7 +61,7 @@ def main(conf):
         yaml.safe_dump(conf, outfile)
 
     # Define Loss function.
-    loss_func = PITLossWrapper(pairwise_mse, pit_from='pw_mtx')
+    loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from='pw_mtx')
     system = System(model=model, loss_func=loss_func, optimizer=optimizer,
                     train_loader=train_loader, val_loader=val_loader,
                     scheduler=scheduler, config=conf)

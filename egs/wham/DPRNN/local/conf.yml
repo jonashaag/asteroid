@@ -39,3 +39,7 @@ data:
   train_noisy_dir: ''
   test_clean_dir: ''
   test_noisy_dir: ''
+eval:
+  exp_dir: ''
+  use_gpu: True
+  n_save_ex: 1

@@ -21,6 +21,7 @@ class MixFilesDataset(torch.utils.data.Dataset):
     def __init__(self, file_pairs, segment=None, sr=None, resample_args=None):
         if segment is None:
             seg_len = None
+            ok_file_pairs = file_pairs
         else:
             if sr is None:
                 raise ValueError("Must pass 'sr' if 'segment' is not None")
@@ -35,6 +36,8 @@ class MixFilesDataset(torch.utils.data.Dataset):
         self.sr = sr
         self.resample_args = resample_args
         self.seg_len = seg_len
+
+        self.mix = [[m] for m, _ in self.file_pairs]
 
     def __len__(self):
         return len(self.file_pairs)

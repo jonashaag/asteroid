@@ -27,7 +27,7 @@ class VBDDataset(MixFilesDataset):
             )
 
         file_pairs = [
-            (os.path.join(clean_root, clean), [os.path.join(noisy_root, noisy)])
+            (os.path.join(noisy_root, noisy), [os.path.join(clean_root, clean)])
             for (clean, _), (noisy, _) in zip(self.clean_files, self.noisy_files)
         ]
         super().__init__(file_pairs, *args, **kwargs)

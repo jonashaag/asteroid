@@ -12,7 +12,7 @@ from asteroid import DPRNNTasNet
 from asteroid.data.vbd_dataset import VBDDataset
 from asteroid.engine.optimizers import make_optimizer
 from asteroid.engine.system import System
-from asteroid.losses import PITLossWrapper, pairwise_mse
+from asteroid.losses import PITLossWrapper, pairwise_mse, pairwise_neg_sisdr
 
 # Keys which are not in the conf.yml file can be added here.
 # In the hierarchical dictionary created when parsing, the key `key` can be
@@ -21,8 +21,6 @@ from asteroid.losses import PITLossWrapper, pairwise_mse
 # By default train.py will use all available GPUs. The `id` option in run.sh
 # will limit the number of available GPUs for train.py .
 parser = argparse.ArgumentParser()
-parser.add_argument('--exp_dir', default='exp/tmp',
-                    help='Full path to save best validation model')
 
 
 def main(conf):
@@ -54,7 +52,7 @@ def main(conf):
         scheduler = ReduceLROnPlateau(optimizer=optimizer, factor=0.5,
                                       patience=5)
     # Just after instantiating, save the args. Easy loading in the future.
-    exp_dir = conf['main_args']['exp_dir']
+    exp_dir = conf['eval']['exp_dir']
     os.makedirs(exp_dir, exist_ok=True)
     conf_path = os.path.join(exp_dir, 'conf.yml')
     with open(conf_path, 'w') as outfile:

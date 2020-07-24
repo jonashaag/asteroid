@@ -57,11 +57,10 @@ if [[ $stage -le 3 ]]; then
 fi
 
 if [[ $stage -le 4 ]]; then
-exit 0
 	echo "Stage 4 : Evaluation"
 	$python_path eval.py \
-		--task $task \
-		--test_dir $test_dir \
+		--test_clean_dir $test_clean_dir \
+		--test_noisy_dir $test_noisy_dir \
 		--use_gpu $eval_use_gpu \
 		--exp_dir ${expdir} | tee logs/eval_${tag}.log
 	cp logs/eval_${tag}.log $expdir/eval.log
