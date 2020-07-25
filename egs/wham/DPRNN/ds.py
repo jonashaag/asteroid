@@ -29,7 +29,7 @@ def loadir(f, c, sr):
     return pyloudnorm.normalize.peak(dat, -10)
 
 
-VCTK_ROOT = "/home/jo/dev/audio-experiments-data/VCTK/"
+VCTK_ROOT = "/root/VCTK-8kHz"
 
 
 class MyDataset:
@@ -162,12 +162,14 @@ def getds(for_test, conf):
     if for_test:
         # Test set
         # todo: proper subset
-        return StaticRandomSubsetDataset(
+        test_set = StaticRandomSubsetDataset(
             MyDataset(
                 conf["data"]["sample_rate"], None, val_people, val_irs, vctk_files
             ),
             0.01,
         )
+        print("DS hash", hashlib.sha1(str(test_set.items)).hexdigest())
+        return test_set
 
     train_set = MyDataset(
         conf["data"]["sample_rate"],
@@ -187,6 +189,7 @@ def getds(for_test, conf):
         0.1,
     )
     print(("DS len", len(train_set), len(val_set)))
+    print("DS hashes", hashlib.sha1(str(train_set.items)).hexdigest(), hashlib.sha1(str(val_set.items)).hexdigest())
 
     # with open("/tmp/42", "wb") as f:
     #    def sample(l, n):

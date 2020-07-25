@@ -20,7 +20,6 @@ from asteroid.losses import (
 )
 
 from torch.nn.modules.loss import _Loss
-import zounds
 
 
 class STFTMSE(_Loss):
@@ -40,6 +39,7 @@ pairwise_stftmse = STFTMSE()
 
 
 def mk_bark_loss(sr):
+    import zounds
     class SR8000(zounds.timeseries.samplerate.AudioSampleRate):
         def __init__(self):
             super().__init__(8000, 256, 64)
@@ -132,11 +132,11 @@ def main(conf):
         yaml.safe_dump(conf, outfile)
 
     # Define Loss function.
-    # loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
+    loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
     # loss_func = PITLossWrapper(STFTMSE(), pit_from="pw_mtx")
     # loss_func = PITLossWrapper(singlesrc_mse, pit_from='pw_pt')
-    loss_func = PITLossWrapper(singlesrc_bark_loss, pit_from="pw_pt")
-    system = MySystem(
+    #loss_func = PITLossWrapper(singlesrc_bark_loss, pit_from="pw_pt")
+    system = System(
         model=model,
         loss_func=loss_func,
         optimizer=optimizer,
@@ -170,8 +170,6 @@ def main(conf):
         benchmark=True,
         # precision=16,
         limit_train_batches=0.00001 if no_train else 0.02,
-        # resume_from_checkpoint="exp/train_dprnn_sep_clean_8kmin_0a363a53/_ckpt_epoch_29.ckpt",
-        resume_from_checkpoint="exp/train_dprnn_sep_clean_8kmin_8553e947/_ckpt_epoch_3.ckpt",
         gradient_clip_val=conf["training"]["gradient_clipping"],
     )
     trainer.fit(system)
