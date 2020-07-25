@@ -1,8 +1,5 @@
 #!/bin/bash
-
-# Exit on error
-set -e
-set -o pipefail
+set -e  # Exit on error
 
 # Main storage directory. You'll need disk space to dump the WHAM mixtures and the wsj0 wav
 # files if you start from sphere files.
@@ -72,12 +69,12 @@ if [[ $stage -le  0 ]]; then
   . local/convert_sphere2wav.sh --sphere_dir $sphere_dir --wav_dir $wsj0_wav_dir
 fi
 
-if [[ $stage -eq  1 ]]; then
+if [[ $stage -le  1 ]]; then
 	echo "Stage 1: Generating 8k and 16k WHAM dataset"
   . local/prepare_data.sh --wav_dir $wsj0_wav_dir --out_dir $wham_wav_dir --python_path $python_path
 fi
 
-if [[ $stage -eq  2 ]]; then
+if [[ $stage -le  2 ]]; then
 	# Make json directories with min/max modes and sampling rates
 	echo "Stage 2: Generating json files including wav path and duration"
 	for sr_string in 8 16; do
@@ -100,7 +97,7 @@ expdir=exp/train_dprnn_${tag}
 mkdir -p $expdir && echo $uuid >> $expdir/run_uuid.txt
 echo "Results from the following experiment will be stored in $expdir"
 
-if [[ $stage -eq 3 ]]; then
+if [[ $stage -le 3 ]]; then
   echo "Stage 3: Training"
   mkdir -p logs
   CUDA_VISIBLE_DEVICES=$id $python_path train.py \
@@ -114,17 +111,19 @@ if [[ $stage -eq 3 ]]; then
 	echo "wham/DPRNN" > $expdir/publish_dir/recipe_name.txt
 fi
 
-if [[ $stage -eq 4 ]]; then
+if [[ $stage -le 4 ]]; then
+  exit 0
 	echo "Stage 4 : Evaluation"
-  exit -
 	CUDA_VISIBLE_DEVICES=$id $python_path eval.py \
 		--task $task \
+		--test_dir $test_dir \
 		--use_gpu $eval_use_gpu \
 		--exp_dir ${expdir} | tee logs/eval_${tag}.log
 	cp logs/eval_${tag}.log $expdir/eval.log
 fi
 
-if [[ $stage -eq 5 ]]; then
+if [[ $stage -le 5 ]]; then
+  exit 0
 	echo "Stage 5 : Inference"
 	CUDA_VISIBLE_DEVICES=$id $python_path infer.py \
 		--use_gpu $eval_use_gpu \

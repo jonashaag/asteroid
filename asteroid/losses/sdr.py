@@ -48,7 +48,7 @@ class PairwiseNegSDR(_Loss):
         self.take_log = take_log
 
     def forward(self, est_targets, targets):
-        assert targets.size() == est_targets.size()
+        assert targets.size() == est_targets.size(), (targets.size(), est_targets.size())
         # Step 1. Zero-mean norm
         if self.zero_mean:
             mean_source = torch.mean(targets, dim=2, keepdim=True)
