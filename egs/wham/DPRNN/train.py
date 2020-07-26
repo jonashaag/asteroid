@@ -56,7 +56,7 @@ def mk_bark_loss(sr):
     ).cuda()
 
 
-singlesrc_bark_loss = mk_bark_loss(8000)
+#singlesrc_bark_loss = mk_bark_loss(8000)
 
 
 def peaknorm(t, n):
@@ -118,7 +118,7 @@ def main(conf):
 
     train_loader, val_loader = ds.getds(False, conf)
 
-    model = DPRNNTasNet(**conf["filterbank"], **conf["masknet"])
+    model = DPRNNTasNet(**conf["filterbank"], **conf["masknet"], n_src=1)
     optimizer = make_optimizer(model.parameters(), **conf["optim"])
     # Define scheduler
     scheduler = None
@@ -169,7 +169,7 @@ def main(conf):
         # distributed_backend='ddp',
         benchmark=True,
         # precision=16,
-        limit_train_batches=0.00001 if no_train else 0.02,
+        limit_train_batches=2 if no_train else 7000,
         gradient_clip_val=conf["training"]["gradient_clipping"],
     )
     trainer.fit(system)
@@ -196,7 +196,7 @@ if __name__ == "__main__":
     # We start with opening the config file conf.yml as a dictionary from
     # which we can create parsers. Each top level key in the dictionary defined
     # by the YAML file creates a group in the parser.
-    with open("local/conf.yml") as f:
+    with open(os.environ["CONF"]) as f:
         def_conf = yaml.safe_load(f)
     parser = prepare_parser_from_dict(def_conf, parser=parser)
     # Arguments are then parsed into a hierarchical dictionary (instead of

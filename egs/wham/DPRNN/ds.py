@@ -1,12 +1,13 @@
 from torch.utils.data import DataLoader
-import os, glob, json, random, librosa, scipy.signal, pyloudnorm, numpy as np, pickle, tqdm, tqdm.contrib.concurrent
+import os, glob, ujson, random, librosa, scipy.signal, pyloudnorm, numpy as np, pickle, tqdm, tqdm.contrib.concurrent
+import hashlib
 
 
 class StaticRandomSubsetDataset:
     def __init__(self, ds, r):
         self.ds = ds
         self.r = r
-        self.idxs = random.sample(range(len(ds)), int(len(ds) * r))
+        self.idxs = deterministic_sample(range(len(ds)), int(len(ds) * r))
 
     def __len__(self):
         return len(self.idxs)
@@ -16,16 +17,15 @@ class StaticRandomSubsetDataset:
 
 
 def deterministic_shuffle(x):
-    random.seed(4242)
-    random.shuffle(x)
-    random.seed()
+    random.Random(4242).shuffle(x)
+
+def deterministic_sample(x, n):
+    return random.Random(4242).sample(x, n)
 
 
-def loadir(f, c, sr):
+def loadir(f, sr):
     dat = librosa.core.load(f, sr=sr, mono=False, duration=0.5)[0]
-    if len(dat.shape) == 1:
-        dat = [dat]
-    dat = dat[c]
+    assert len(dat.shape) == 1, f
     return pyloudnorm.normalize.peak(dat, -10)
 
 
@@ -108,7 +108,7 @@ def getvctk():
         print(e)
         vctk_subset = [
             os.path.basename(f)
-            for f in glob.glob(f"{VCTK_ROOT}/**/*.wav", recursive=True)
+            for f in sorted(glob.glob(f"{VCTK_ROOT}/**/*.wav", recursive=True))
         ]
         with open("/tmp/vctk.pkl", "wb") as f:
             pickle.dump(vctk_subset, f)
@@ -116,7 +116,7 @@ def getvctk():
     print(("VCTK subset #", len(vctk_subset), VCTK_ROOT))
     vctk_files = [
         (f, s, e)
-        for f, s, e in json.load(open(f"{VCTK_ROOT}/../VCTK/silences.json"))
+        for f, s, e in ujson.load(open(f"{VCTK_ROOT}/silences.json"))
         if f in vctk_subset
     ]
     vctk_people = list(set(f.split("_")[0] for f, _, _ in vctk_files))
@@ -134,16 +134,7 @@ def getvctk():
 
 
 def getirs(sr):
-    irs = tqdm.contrib.concurrent.thread_map(
-        lambda x: loadir(f"/home/jo/dev/audio-experiments/{x[0]}", x[1], sr),
-        [
-            (f, c)
-            for f, c, k in json.load(
-                open("/home/jo/dev/audio-experiments/small-manual-2.json")
-            )
-            if k == "yes"
-        ],
-    )
+    irs = tqdm.contrib.concurrent.thread_map(lambda x: loadir(x, sr), sorted(glob.glob("/root/8kHz/*")))
     # TODO: find better way to deal with these (late argmax)
     irs = [ir for ir in irs if ir.argmax() < 1770]
     deterministic_shuffle(irs)
@@ -168,7 +159,7 @@ def getds(for_test, conf):
             ),
             0.01,
         )
-        print("DS hash", hashlib.sha1(str(test_set.items)).hexdigest())
+        print("DS hash", hashlib.md5(ujson.dumps(test_set.items).encode("utf8")).hexdigest())
         return test_set
 
     train_set = MyDataset(
@@ -186,10 +177,11 @@ def getds(for_test, conf):
             val_irs,
             vctk_files,
         ),
-        0.1,
+        0.003,
     )
     print(("DS len", len(train_set), len(val_set)))
-    print("DS hashes", hashlib.sha1(str(train_set.items)).hexdigest(), hashlib.sha1(str(val_set.items)).hexdigest())
+    print("DS hashes", hashlib.md5(ujson.dumps(train_set.items).encode("utf8")).hexdigest(),
+                       hashlib.md5(ujson.dumps([val_set.ds.items, val_set.idxs]).encode("utf8")).hexdigest())
 
     # with open("/tmp/42", "wb") as f:
     #    def sample(l, n):

@@ -30,7 +30,7 @@ tag=""  # Controls the directory name associated to the experiment
 id=$CUDA_VISIBLE_DEVICES
 
 # Data
-task=sep_clean  # Specify the task here (sep_clean, sep_noisy, enh_single, enh_both)
+task=enh_single  # Specify the task here (sep_clean, sep_noisy, enh_single, enh_both)
 sample_rate=8000
 mode=min
 #nondefault_src=  # If you want to train a network with 3 output streams for example.
