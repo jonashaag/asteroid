@@ -24,31 +24,37 @@ python_path=python
 # ./run.sh --stage 3 --tag my_tag --task sep_noisy --id 0,1
 
 # General
-stage=0  # Controls from which stage to start
+stage=3  # Controls from which stage to start
 tag=""  # Controls the directory name associated to the experiment
 # You can ask for several GPUs using id (passed to CUDA_VISIBLE_DEVICES)
 id=$CUDA_VISIBLE_DEVICES
 
 # Data
-task=sep_clean  # Specify the task here (sep_clean, sep_noisy, enh_single, enh_both)
+task=enh_single  # Specify the task here (sep_clean, sep_noisy, enh_single, enh_both)
 sample_rate=8000
 mode=min
-nondefault_src=  # If you want to train a network with 3 output streams for example.
+#nondefault_src=  # If you want to train a network with 3 output streams for example.
 
 # Training
-batch_size=8
-num_workers=8
+#batch_size=9
+#num_workers=4
 #optimizer=adam
-lr=0.001
-epochs=200
+#lr=0.001
+#epochs=200
+#weight_decay=0.00001
 
-# Architecture
-n_blocks=8
-n_repeats=3
-mask_nonlinear=relu
+# Architecture config
+#kernel_size=16
+#stride=8
+#chunk_size=100
+#hop_size=50
 
 # Evaluation
 eval_use_gpu=1
+
+# Inference
+input=
+output=
 
 
 . utils/parse_options.sh
@@ -66,12 +72,12 @@ if [[ $stage -le  0 ]]; then
   . local/convert_sphere2wav.sh --sphere_dir $sphere_dir --wav_dir $wsj0_wav_dir
 fi
 
-if [[ $stage -le  1 ]]; then
+if [[ $stage -eq  1 ]]; then
 	echo "Stage 1: Generating 8k and 16k WHAM dataset"
   . local/prepare_data.sh --wav_dir $wsj0_wav_dir --out_dir $wham_wav_dir --python_path $python_path
 fi
 
-if [[ $stage -le  2 ]]; then
+if [[ $stage -eq  2 ]]; then
 	# Make json directories with min/max modes and sampling rates
 	echo "Stage 2: Generating json files including wav path and duration"
 	for sr_string in 8 16; do
@@ -94,35 +100,35 @@ expdir=exp/train_convtasnet_${tag}
 mkdir -p $expdir && echo $uuid >> $expdir/run_uuid.txt
 echo "Results from the following experiment will be stored in $expdir"
 
-if [[ $stage -le 3 ]]; then
+if [[ $stage -eq 3 ]]; then
   echo "Stage 3: Training"
   mkdir -p logs
   CUDA_VISIBLE_DEVICES=$id $python_path train.py \
 		--train_dir $train_dir \
 		--valid_dir $valid_dir \
-		--task $task \
-		--sample_rate $sample_rate \
-		--lr $lr \
-		--epochs $epochs \
-		--batch_size $batch_size \
-		--num_workers $num_workers \
-		--mask_act $mask_nonlinear \
-		--n_blocks $n_blocks \
-		--n_repeats $n_repeats \
 		--exp_dir ${expdir}/ | tee logs/train_${tag}.log
 	cp logs/train_${tag}.log $expdir/train.log
 
 	# Get ready to publish
 	mkdir -p $expdir/publish_dir
-	echo "wham/ConvTasNet" > $expdir/publish_dir/recipe_name.txt
+	echo "wham/DPRNN" > $expdir/publish_dir/recipe_name.txt
 fi
 
-if [[ $stage -le 4 ]]; then
+if [[ $stage -eq 4 ]]; then
 	echo "Stage 4 : Evaluation"
+  exit -
 	CUDA_VISIBLE_DEVICES=$id $python_path eval.py \
 		--task $task \
-		--test_dir $test_dir \
 		--use_gpu $eval_use_gpu \
 		--exp_dir ${expdir} | tee logs/eval_${tag}.log
 	cp logs/eval_${tag}.log $expdir/eval.log
+fi
+
+if [[ $stage -eq 5 ]]; then
+	echo "Stage 5 : Inference"
+	CUDA_VISIBLE_DEVICES=$id $python_path infer.py \
+		--use_gpu $eval_use_gpu \
+		--input $input \
+		--output $output \
+		--exp_dir ${expdir}
 fi

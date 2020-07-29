@@ -1,35 +1,32 @@
 # Model config
 # SuDoRM-RF 1.0x:
-model:
-  out_channels: 128
-  in_channels: 512
-  num_blocks: 16
-  upsampling_depth: 4
-  enc_kernel_size: 21
-  enc_num_basis: 512
-  num_sources: 1
+#model:
+#  out_channels: 128
+#  in_channels: 512
+#  num_blocks: 16
+#  upsampling_depth: 4
+#  enc_kernel_size: 21
+#  enc_num_basis: 512
+#  num_sources: 1
 # Best model:
 #model:
-  #out_channels: 512
-  #in_channels: 512 (?)
-  #num_blocks: 34
-  #upsampling_depth: 4
-  #enc_kernel_size: 21
-  #enc_num_basis: 512 (?)
-  #num_sources: 1
-# Default improved
-#model:
-  #out_channels: 256
-  #in_channels: 512
-  #num_blocks: 16
-  #upsampling_depth: 5
-  #enc_kernel_size: 21
-  #enc_num_basis: 512
-  #num_sources: 1
+#  out_channels: 512
+#  in_channels: 512
+#  num_blocks: 34
+#  upsampling_depth: 5
+#  enc_kernel_size: 21
+#  enc_num_basis: 512
+model:
+  out_channels: 512
+  in_channels: 512
+  num_blocks: 25
+  upsampling_depth: 5
+  enc_kernel_size: 21
+  enc_num_basis: 512
 # Training config
 training:
   epochs: 200
-  batch_size: 4
+  batch_size: 6
   num_workers: 4
   half_lr: yes
   early_stop: yes
@@ -37,12 +34,12 @@ training:
 # Optim config
 optim:
   optimizer: adam
-  lr: 0.001
+  lr: 0.0005
 # Data config
 data:
   train_dir: data/wav8k/min/tr/
   valid_dir: data/wav8k/min/cv/
-  task: sep_clean
+  task: enh_single
   sample_rate: 8000
   mode: min
-  segment: 3.0
+  segment: 2.0

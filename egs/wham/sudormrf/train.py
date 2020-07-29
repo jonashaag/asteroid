@@ -1,6 +1,7 @@
 import os
 import argparse
 import json
+from pprint import pprint
 
 import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -10,9 +11,95 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from asteroid.models.sudormrf import SuDORMRFImproved
 from asteroid.engine.optimizers import make_optimizer
 from asteroid.engine.system import System
-from asteroid.losses import PITLossWrapper, pairwise_neg_sisdr, singlesrc_mse
+from asteroid.losses import (
+    PITLossWrapper,
+    pairwise_neg_sisdr,
+    pairwise_mse,
+    pairwise_neg_sisdr,
+    pairwise_neg_sdsdr,
+)
 
-# from asteroid.losses.mse import STFTMSE
+from torch.nn.modules.loss import _Loss
+
+
+class STFTMSE(_Loss):
+    def forward(self, est_targets, targets):
+        # assumes sr = 8000
+        assert (est_targets.shape[1], targets.shape[1]) == (1, 1)
+        win = torch.hann_window(256, device=targets.device)
+        loss = (
+            torch.stft(est_targets[:, 0], 256, 64, window=win)
+            - torch.stft(targets[:, 0], 256, 64, window=win)
+        ) ** 2
+        m = loss.mean(dim=list(range(1, loss.ndim)))
+        return 1000 * m.unsqueeze(1).unsqueeze(1)
+
+
+pairwise_stftmse = STFTMSE()
+
+
+def mk_bark_loss(sr):
+    import zounds
+    class SR8000(zounds.timeseries.samplerate.AudioSampleRate):
+        def __init__(self):
+            super().__init__(8000, 256, 64)
+
+    scale = zounds.BarkScale(zounds.FrequencyBand(20, int(sr / 2)), 512)
+    return zounds.learn.PerceptualLoss(
+        scale,
+        SR8000(),
+        lap=1,
+        log_factor=10,
+        basis_size=512,
+        frequency_weighting=zounds.AWeighting(),
+        cosine_similarity=False,
+    ).cuda()
+
+
+#singlesrc_bark_loss = mk_bark_loss(8000)
+
+
+def peaknorm(t, n):
+    return (
+        torch.pow(10, torch.tensor(n / 20.0))
+        / t.abs().max(dim=-1, keepdims=True)[0]
+        * t
+    )
+
+
+class MySystem(System):
+    def validation_step(self, batch, batch_nb):
+        inputs, targets = batch
+        est_targets = self(inputs)
+        loss = self.loss_func(est_targets, targets)
+        stftmse = pairwise_stftmse(est_targets, targets).mean()
+        stftmse_norm = pairwise_stftmse(
+            peaknorm(est_targets, -10), peaknorm(targets, -10)
+        ).mean()
+        sisdr = pairwise_neg_sisdr(est_targets, targets).mean()
+        sdsdr = pairwise_neg_sdsdr(est_targets, targets).mean()
+        mse = pairwise_mse(est_targets, targets).mean()
+        return {
+            "val_loss": loss,
+            "m_stftmse": stftmse,
+            "m_stftmse_norm": stftmse_norm,
+            "m_sisdr": sisdr,
+            "m_sdsdr": sdsdr,
+            "m_mse": mse,
+        }
+
+    def validation_epoch_end(self, outputs):
+        pprint(
+            (
+                "Validation results",
+                {
+                    k: float(torch.stack([x[k] for x in outputs]).mean().item())
+                    for k in outputs[0].keys()
+                },
+            )
+        )
+        return super().validation_epoch_end(outputs)
+
 
 # Keys which are not in the conf.yml file can be added here.
 # In the hierarchical dictionary created when parsing, the key `key` can be
@@ -31,7 +118,7 @@ def main(conf):
 
     train_loader, val_loader = ds.getds(False, conf)
 
-    model = SuDORMRFImproved(**conf["model"])
+    model = SuDORMRFImproved(**conf["model"], num_sources=1)
     optimizer = make_optimizer(model.parameters(), **conf["optim"])
     # Define scheduler
     scheduler = None
@@ -46,8 +133,9 @@ def main(conf):
 
     # Define Loss function.
     loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
-    # loss_func = PITLossWrapper(STFTMSE(), pit_from='pw_mtx')
+    # loss_func = PITLossWrapper(STFTMSE(), pit_from="pw_mtx")
     # loss_func = PITLossWrapper(singlesrc_mse, pit_from='pw_pt')
+    #loss_func = PITLossWrapper(singlesrc_bark_loss, pit_from="pw_pt")
     system = System(
         model=model,
         loss_func=loss_func,
@@ -65,11 +153,13 @@ def main(conf):
     )
     early_stopping = False
     if conf["training"]["early_stop"]:
-        early_stopping = EarlyStopping(monitor="val_loss", patience=10, verbose=1)
+        early_stopping = EarlyStopping(monitor="val_loss", patience=30,
+                                       verbose=1)
 
     # Don't ask GPU if they are not available.
     assert torch.cuda.is_available()
     gpus = -1 if torch.cuda.is_available() else None
+    no_train = 0
     trainer = pl.Trainer(
         max_epochs=conf["training"]["epochs"],
         checkpoint_callback=checkpoint,
@@ -79,8 +169,7 @@ def main(conf):
         # distributed_backend='ddp',
         benchmark=True,
         # precision=16,
-        limit_train_batches=0.005,
-        # resume_from_checkpoint='exp/train_dprnn_sep_clean_8kmin_0cd52ddc/_ckpt_epoch_22.ckpt',
+        limit_train_batches=2 if no_train else int(50_000/conf["training"]["batch_size"]),
         gradient_clip_val=conf["training"]["gradient_clipping"],
     )
     trainer.fit(system)
@@ -102,13 +191,12 @@ def main(conf):
 
 if __name__ == "__main__":
     import yaml
-    from pprint import pprint as print
     from asteroid.utils import prepare_parser_from_dict, parse_args_as_dict
 
     # We start with opening the config file conf.yml as a dictionary from
     # which we can create parsers. Each top level key in the dictionary defined
     # by the YAML file creates a group in the parser.
-    with open("local/conf.yml") as f:
+    with open(os.environ["CONF"]) as f:
         def_conf = yaml.safe_load(f)
     parser = prepare_parser_from_dict(def_conf, parser=parser)
     # Arguments are then parsed into a hierarchical dictionary (instead of

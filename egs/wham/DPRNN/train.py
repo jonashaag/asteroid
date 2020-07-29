@@ -169,7 +169,7 @@ def main(conf):
         # distributed_backend='ddp',
         benchmark=True,
         # precision=16,
-        limit_train_batches=2 if no_train else 7000,
+        limit_train_batches=2 if no_train else int(50_000/conf["training"]["batch_size"]),
         gradient_clip_val=conf["training"]["gradient_clipping"],
     )
     trainer.fit(system)

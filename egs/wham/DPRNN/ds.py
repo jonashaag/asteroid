@@ -4,10 +4,11 @@ import hashlib
 
 
 class StaticRandomSubsetDataset:
-    def __init__(self, ds, r):
+    def __init__(self, ds, r=None, n=None):
         self.ds = ds
         self.r = r
-        self.idxs = deterministic_sample(range(len(ds)), int(len(ds) * r))
+        self.n = n
+        self.idxs = deterministic_sample(range(len(ds)), n or int(len(ds) * r))
 
     def __len__(self):
         return len(self.idxs)
@@ -177,7 +178,8 @@ def getds(for_test, conf):
             val_irs,
             vctk_files,
         ),
-        0.003,
+        #0.005,
+        n=5_000,
     )
     print(("DS len", len(train_set), len(val_set)))
     print("DS hashes", hashlib.md5(ujson.dumps(train_set.items).encode("utf8")).hexdigest(),
