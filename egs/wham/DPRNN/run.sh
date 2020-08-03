@@ -104,9 +104,9 @@ if [[ $stage -eq 3 ]]; then
   echo "Stage 3: Training"
   mkdir -p logs
   CUDA_VISIBLE_DEVICES=$id $python_path train.py \
-		--train_dir $train_dir \
-		--valid_dir $valid_dir \
 		--exp_dir ${expdir}/ | tee logs/train_${tag}.log
+		#--train_dir $train_dir \
+		#--valid_dir $valid_dir \
 	cp logs/train_${tag}.log $expdir/train.log
 
 	# Get ready to publish

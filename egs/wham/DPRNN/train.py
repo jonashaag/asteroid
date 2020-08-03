@@ -6,7 +6,7 @@ from pprint import pprint
 import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateLogger
 
 from asteroid import DPRNNTasNet
 from asteroid.engine.optimizers import make_optimizer
@@ -15,6 +15,7 @@ from asteroid.losses import (
     PITLossWrapper,
     pairwise_neg_sisdr,
     pairwise_mse,
+    singlesrc_mse,
     pairwise_neg_sisdr,
     pairwise_neg_sdsdr,
 )
@@ -114,9 +115,9 @@ parser.add_argument(
 
 
 def main(conf):
-    import ds
+    import ds2
 
-    train_loader, val_loader = ds.getds(False, conf)
+    train_loader, val_loader = ds2.getds(False, conf)
 
     model = DPRNNTasNet(**conf["filterbank"], **conf["masknet"], n_src=1)
     optimizer = make_optimizer(model.parameters(), **conf["optim"])
@@ -132,9 +133,9 @@ def main(conf):
         yaml.safe_dump(conf, outfile)
 
     # Define Loss function.
-    loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
+    #loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
     # loss_func = PITLossWrapper(STFTMSE(), pit_from="pw_mtx")
-    # loss_func = PITLossWrapper(singlesrc_mse, pit_from='pw_pt')
+    loss_func = PITLossWrapper(singlesrc_mse, pit_from='pw_pt')
     #loss_func = PITLossWrapper(singlesrc_bark_loss, pit_from="pw_pt")
     system = System(
         model=model,
@@ -169,8 +170,11 @@ def main(conf):
         # distributed_backend='ddp',
         benchmark=True,
         # precision=16,
-        limit_train_batches=2 if no_train else int(50_000/conf["training"]["batch_size"]),
+        #limit_train_batches=2 if no_train else int(150_000/conf["training"]["batch_size"]),
+        #limit_val_batches=0.5,
+        #resume_from_checkpoint="exp/train_dprnn_enh_single_8kmin_b2d9ecee/_ckpt_epoch_96.ckpt",
         gradient_clip_val=conf["training"]["gradient_clipping"],
+        callbacks=[LearningRateLogger()],
     )
     trainer.fit(system)
 
