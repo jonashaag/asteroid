@@ -4,8 +4,8 @@ data:
   sample_rate: 8000
   segment: 2
   task: enh_single
-  clean_files: "/home/jo/dev/audio-experiments-data/clean/VCTK-8kHz-nonsilent/**/*.wav"
-  ir_files: "/home/jo/dev/audio-experiments-data/small-manual-yes-gte0.7/**/*.wav"
+  clean_files: "/root/clean/**/*.wav"
+  ir_files: "/root/irs/**/*.wav"
 filterbank:
   kernel_size: 16
   n_filters: 64
@@ -26,9 +26,9 @@ optim:
   optimizer: adam
   weight_decay: 1.0e-05
 training:
-  batch_size: 14
+  batch_size: 20
   early_stop: true
   epochs: 200
   gradient_clipping: 5
   half_lr: true
-  num_workers: 3
+  num_workers: 4

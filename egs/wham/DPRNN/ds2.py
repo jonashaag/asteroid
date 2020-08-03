@@ -2,6 +2,32 @@ from torch.utils.data import DataLoader, Dataset
 import os, glob, ujson, random, librosa, scipy.signal, pyloudnorm, numpy as np, pickle, tqdm, tqdm.contrib.concurrent, pandas as pd
 import hashlib
 
+np.seterr("raise")
+
+
+def trim_zeros_block(filt, trim='fb', block_size=1024):
+    """Trim blocks of zeros"""
+    trim = trim.upper()
+    first = 0
+    if 'F' in trim:
+        for i in range(0, len(filt), block_size):
+            if np.any(filt[i:i+block_size] != 0.):
+                first = i
+                break
+    last = len(filt)
+    if 'B' in trim:
+        for i in range(len(filt)-1, block_size - 1, -block_size):
+            if np.any(filt[i-block_size:i] != 0.):
+                last = i
+                break
+    return filt[first:last]
+
+
+def fast_trim_zeros(filt, trim='fb'):
+    filt = trim_zeros_block(filt, trim)
+    return np.trim_zeros(filt, trim)
+
+
 
 def deterministic_shuffle(x):
     random.Random(4242).shuffle(x)
@@ -20,7 +46,7 @@ def json_hash(*xs):
 
 def loadmono(f, expected_sr, **kw):
     data, sr = librosa.core.load(f, sr=None, mono=False, **kw)
-    assert sr == expected_sr
+    assert sr == expected_sr, (f, expected_sr, sr)
     assert data.ndim == 1, f"{f} is not mono"
     return data
 
@@ -55,23 +81,26 @@ class MyFastDataset(Dataset):
         source_chunk_len = chunk_len + int(self.ir_duration * self.sr)
 
         # Get random IR
-        ir = self.find_ir()
+        ir, ir_f, ir_idx = self.find_ir()
 
         # Get random clean
-        clean = self.find_clean(source_chunk_len)
+        clean, clean_f, clean_idx = self.find_clean(source_chunk_len)
         random_start = np.random.randint(0, len(clean) + 1 - source_chunk_len)
         clean_chunk = clean[random_start:][:source_chunk_len]
 
         # Convolve
-        direct_frames = int(ir.argmax() + self.sr * np.random.uniform(0.01, 0.02))
+        direct_frames = int(ir.argmax() + self.sr * (0.01 + 0.001 * (ir_idx % 10)))
         direct_ir = librosa.util.fix_length(ir[:direct_frames], len(ir))
 
-        direct = pyloudnorm.normalize.peak(
-            scipy.signal.convolve(clean_chunk, direct_ir, "valid"), -1
-        )
-        reverberant = pyloudnorm.normalize.peak(
-            scipy.signal.convolve(clean_chunk, ir, "valid"), -1
-        )
+        try:
+            direct = pyloudnorm.normalize.peak(
+                scipy.signal.convolve(clean_chunk, direct_ir, "valid")[1:], -1
+            )
+            reverberant = pyloudnorm.normalize.peak(
+                scipy.signal.convolve(clean_chunk, ir, "valid")[1:], -1
+            )
+        except Exception as err:
+            raise RuntimeError(f"Error with {clean_f} {ir_f} {random_start} {direct_frames}") from err
         assert direct.shape == reverberant.shape
 
         # Transform for Asteroid
@@ -92,7 +121,7 @@ class MyFastDataset(Dataset):
                 # File too short
                 self.clean_files[clean_idx] = None
                 continue
-            return clean
+            return clean, clean_f, clean_idx
 
     def find_ir(self):
         """Find suitable IR"""
@@ -102,12 +131,13 @@ class MyFastDataset(Dataset):
             if ir_f is None:
                 # we already removed this in the past
                 continue
-            ir = loadmono(ir_f, self.sr, duration=self.ir_duration)
+            ir = loadmono(ir_f, self.sr)
+            ir = fast_trim_zeros(ir)
             # TODO: find better way to deal with these (late argmax) (0.45 - was 1770)
-            if ir.argmax() >= 0.45 * self.ir_duration * self.sr:
+            if not ir.size or ir.argmax() >= 0.45 * self.ir_duration * self.sr:
                 self.ir_files[ir_idx] = None
                 continue
-            return ir
+            return ir[:int(self.ir_duration * self.sr)], ir_f, ir_idx
 
 
 def groupby(it, key):
@@ -137,64 +167,77 @@ def make_split(it, key, splits):
 def getds(for_test, conf):
     assert not for_test
 
-    (
-        (train_spks, train_clean),
-        (val_spks, val_clean),
-        (test_spks, test_clean),
-    ) = make_split(
-        glob.glob(conf["data"]["clean_files"], recursive=True),
-        lambda f: f.split("_reader_" if "_reader_" in f else "/p")[1].split("_")[0],
-        [0.85, 0.1, 0.05],
-    )
+    if 1:
+        (
+            (train_spks, train_clean),
+            (val_spks, val_clean),
+            (test_spks, test_clean),
+        ) = make_split(
+            glob.glob(conf["data"]["clean_files"], recursive=True),
+            lambda f: f.split("_reader_" if "_reader_" in f else "/p")[1].split("_")[0],
+            [0.85, 0.1, 0.05],
+        )
+    
+        (_, train_irs), (_, val_irs), (_, test_irs) = make_split(
+            glob.glob(conf["data"]["ir_files"], recursive=True),
+            lambda x: x,
+            [0.85, 0.1, 0.05],
+        )
+    
+        print(
+            "Speech",
+            len(train_spks),
+            len(val_spks),
+            len(test_spks),
+            len(train_clean),
+            len(val_clean),
+            len(test_clean),
+            json_hash(train_spks),
+            json_hash(val_spks),
+            json_hash(test_spks),
+        )
+        print(
+            "IR",
+            len(train_irs),
+            len(val_irs),
+            len(test_irs),
+            json_hash(train_irs),
+            json_hash(val_irs),
+            json_hash(test_irs),
+        )
+    
+        train_set = MyFastDataset(
+            conf["data"]["sample_rate"],
+            conf["data"]["segment"],
+            train_clean,
+            train_irs,
+            ir_duration=1.0,
+            n=100_000,
+        )
+    
+        # 1_000 pcs ~ 0.1G mem
+        val_set = MyFastDataset(
+            conf["data"]["sample_rate"],
+            conf["data"]["segment"],
+            val_clean,
+            val_irs,
+            ir_duration=1.0,
+            n=10_000,
+        )
+        val_set = ListDataset(
+            tqdm.contrib.concurrent.thread_map(lambda _: train_set[0], range(len(val_set))))
 
-    (_, train_irs), (_, val_irs), (_, test_irs) = make_split(
-        glob.glob(conf["data"]["ir_files"], recursive=True),
-        lambda x: x,
-        [0.85, 0.1, 0.05],
-    )
+    else:
+        train_set = MyFastDataset(
+            conf["data"]["sample_rate"],
+            conf["data"]["segment"],
+            glob.glob("/root/clean/**/p234_005_nonsilent_6016_55360.wav", recursive=True),
+            glob.glob("/root/foo/**/*.wav", recursive=True),
+            ir_duration=1.0,
+            n=10_000)
 
-    print(
-        "Speech",
-        len(train_spks),
-        len(val_spks),
-        len(test_spks),
-        len(train_clean),
-        len(val_clean),
-        len(test_clean),
-        json_hash(train_spks),
-        json_hash(val_spks),
-        json_hash(test_spks),
-    )
-    print(
-        "IR",
-        len(train_irs),
-        len(val_irs),
-        len(test_irs),
-        json_hash(train_irs),
-        json_hash(val_irs),
-        json_hash(test_irs),
-    )
+        val_set = train_set
 
-    train_set = MyFastDataset(
-        conf["data"]["sample_rate"],
-        conf["data"]["segment"],
-        train_clean,
-        train_irs,
-        ir_duration=1.0,
-        n=100_000,
-    )
-
-    # 1_000 pcs ~ 0.1G mem
-    val_set = MyFastDataset(
-        conf["data"]["sample_rate"],
-        conf["data"]["segment"],
-        val_clean,
-        val_irs,
-        ir_duration=1.0,
-        n=10_000,
-    )
-    val_set = ListDataset(
-        tqdm.contrib.concurrent.thread_map(lambda _: train_set[0], range(len(val_set))))
 
     train_loader = DataLoader(
         train_set,

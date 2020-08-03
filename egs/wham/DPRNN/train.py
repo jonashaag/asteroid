@@ -18,6 +18,7 @@ from asteroid.losses import (
     singlesrc_mse,
     pairwise_neg_sisdr,
     pairwise_neg_sdsdr,
+    SingleSrcNegSTOI,
 )
 
 from torch.nn.modules.loss import _Loss
@@ -135,8 +136,9 @@ def main(conf):
     # Define Loss function.
     #loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
     # loss_func = PITLossWrapper(STFTMSE(), pit_from="pw_mtx")
-    loss_func = PITLossWrapper(singlesrc_mse, pit_from='pw_pt')
+    #loss_func = PITLossWrapper(singlesrc_mse, pit_from='pw_pt')
     #loss_func = PITLossWrapper(singlesrc_bark_loss, pit_from="pw_pt")
+    loss_func = PITLossWrapper(SingleSrcNegSTOI(), pit_from="pw_pt")
     system = System(
         model=model,
         loss_func=loss_func,
@@ -172,7 +174,7 @@ def main(conf):
         # precision=16,
         #limit_train_batches=2 if no_train else int(150_000/conf["training"]["batch_size"]),
         #limit_val_batches=0.5,
-        #resume_from_checkpoint="exp/train_dprnn_enh_single_8kmin_b2d9ecee/_ckpt_epoch_96.ckpt",
+        resume_from_checkpoint="exp/train_dprnn_enh_single_8kmin_ae5293c6/_ckpt_epoch_2.ckpt",
         gradient_clip_val=conf["training"]["gradient_clipping"],
         callbacks=[LearningRateLogger()],
     )
