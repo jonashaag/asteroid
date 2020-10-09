@@ -12,7 +12,6 @@ Note that Asteroid code has two other representations of complex numbers:
 """
 import functools
 import torch
-import torchaudio
 from torch import nn
 from asteroid.filterbanks import transforms
 
@@ -168,7 +167,8 @@ def bound_complex_mask(mask: ComplexTensor, bound_type="tanh"):
     if bound_type in {"BDSS", "sigmoid"}:
         return on_reim(torch.sigmoid)(mask)
     elif bound_type in {"BDT", "tanh", "UBD", None}:
-        mask_mag, mask_phase = torchaudio.functional.magphase(torch.view_as_real(mask))
+        mask_mag = mask.abs()
+        mask_phase = mask.angle()
         if bound_type in {"BDT", "tanh"}:
             mask_mag_bounded = torch.tanh(mask_mag)
         else:
