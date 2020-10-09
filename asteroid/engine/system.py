@@ -186,7 +186,7 @@ class System(pl.LightningModule):
         checkpoint["training_config"] = self.config
         return checkpoint
 
-    def on_batch_start(self, batch):
+    def on_batch_start(self):
         """ Overwrite if needed. Called by pytorch-lightning"""
         pass
 
