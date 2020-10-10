@@ -92,7 +92,8 @@ class System(pl.LightningModule):
         inputs, targets = batch
         est_targets = self(inputs)
         loss = self.loss_func(est_targets, targets)
-        return loss
+        origloss = self.loss_func(inputs, targets)
+        return loss, origloss
 
     def training_step(self, batch, batch_nb):
         """Pass data through the model and compute the loss.
@@ -112,9 +113,9 @@ class System(pl.LightningModule):
             ``'log'``: dict with tensorboard logs
 
         """
-        loss = self.common_step(batch, batch_nb, train=True)
-        tensorboard_logs = {"train_loss": loss}
-        return {"loss": loss, "log": tensorboard_logs}
+        loss, orig_loss = self.common_step(batch, batch_nb, train=True)
+        tensorboard_logs = {"train_loss": loss, "train_loss_imp": orig_loss - loss}
+        return {"loss": loss, "loss_imp": orig_loss - loss, "log": tensorboard_logs}
 
     def validation_step(self, batch, batch_nb):
         """Need to overwrite PL validation_step to do validation.
@@ -129,8 +130,8 @@ class System(pl.LightningModule):
 
             ``'val_loss'``: loss
         """
-        loss = self.common_step(batch, batch_nb, train=False)
-        return {"val_loss": loss}
+        loss, orig_loss = self.common_step(batch, batch_nb, train=False)
+        return {"val_loss": loss, "val_loss_imp": orig_loss - loss}
 
     def validation_epoch_end(self, outputs):
         """How to aggregate outputs of `validation_step` for logging.
@@ -149,8 +150,9 @@ class System(pl.LightningModule):
             ``'progress_bar'``: Tensorboard logs
         """
         avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
-        tensorboard_logs = {"val_loss": avg_loss}
-        return {"val_loss": avg_loss, "log": tensorboard_logs, "progress_bar": tensorboard_logs}
+        avg_loss_imp = torch.stack([x["val_loss_imp"] for x in outputs]).mean()
+        tensorboard_logs = {"val_loss": avg_loss, "val_loss_imp": avg_loss_imp}
+        return {"val_loss": avg_loss, "val_loss_imp": avg_loss_imp, "log": tensorboard_logs, "progress_bar": tensorboard_logs}
 
     def configure_optimizers(self):
         """Initialize optimizers, batch-wise and epoch-wise schedulers."""

@@ -1,7 +1,8 @@
 # Training config
 training:
   epochs: 200
-  batch_size: 12
+  #batch_size: 16
+  batch_size: 20
   num_workers: 4
   half_lr: yes
   early_stop: yes
@@ -14,4 +15,5 @@ optim:
 data:
   json_dir: data/
   val_prop: 0.2
+  #segment: 3.11
   segment: 3
