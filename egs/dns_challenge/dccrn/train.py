@@ -6,9 +6,9 @@ import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, random_split
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor, GPUStatsMonitor
 
-from asteroid import DCCRNet
+from asteroid import DCCRNet, DCUNet
 from asteroid.engine import schedulers
 
 from asteroid.data import DNSDataset
@@ -17,6 +17,7 @@ from asteroid.engine.system import System
 from asteroid.losses import singlesrc_neg_sisdr
 
 from ranger2020 import Ranger
+from warmup_scheduler import GradualWarmupScheduler
 
 # Keys which are not in the conf.yml file can be added here.
 # In the hierarchical dictionary created when parsing, the key `key` can be
@@ -28,7 +29,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--exp_dir", default="exp/tmp", help="Full path to save best validation model")
 
 
-def loss_func (est_target, target): return singlesrc_neg_sisdr(est_target.squeeze(1), target).mean()
+def loss_func (est_target, target):
+    return singlesrc_neg_sisdr(est_target.squeeze(1), target).mean()
 
 
 def main(conf):
@@ -55,12 +57,32 @@ def main(conf):
     )
 
     model = DCCRNet(architecture="DCCRN-CL")
+    #model = DCUNet(architecture="DCUNet-16")
     optimizer = Ranger(model.parameters(), **conf["optim"])
+    #optimizer = make_optimizer(model.parameters(), optimizer="adam", **conf["optim"])
 
     # Define scheduler
     scheduler = None
     if conf["training"]["half_lr"]:
-        scheduler = ReduceLROnPlateau(optimizer=optimizer, factor=0.5, patience=5, min_lr=2e-4)
+        scheduler = {
+            "scheduler": ReduceLROnPlateau(optimizer=optimizer, factor=0.5, patience=5, min_lr=2e-4),
+            "monitor": "val_loss",
+            "interval": "epoch",
+            "frequency": 1,
+        }
+
+    if 0:
+        scheduler = {
+            "scheduler": GradualWarmupScheduler(
+                optimizer=optimizer,
+                multiplier=1,
+                total_epoch=10,
+                after_scheduler=scheduler["scheduler"] if scheduler else None
+            ),
+            "monitor": "val_loss",
+            "interval": "epoch",
+            "frequency": 1,
+        }
 
     # Just after instantiating, save the args. Easy loading in the future.
     exp_dir = conf["main_args"]["exp_dir"]
@@ -89,18 +111,29 @@ def main(conf):
     )
     early_stopping = False
     if conf["training"]["early_stop"]:
-        early_stopping = EarlyStopping(monitor="val_loss", patience=30, verbose=True)
+        early_stopping = EarlyStopping(monitor="val_loss", patience=5, verbose=True)
+    callbacks = [
+        LearningRateMonitor(),
+        #GPUStatsMonitor(),
+    ]
 
     # Don't ask GPU if they are not available.
     gpus = -1 if torch.cuda.is_available() else None
+    assert torch.cuda.is_available()
     trainer = pl.Trainer(
+            #weights_summary='full',
+        callbacks=callbacks,
         max_epochs=conf["training"]["epochs"],
         checkpoint_callback=checkpoint,
         early_stop_callback=early_stopping,
         default_root_dir=exp_dir,
         gpus=gpus,
-        distributed_backend="ddp",
+        benchmark=True,
+        #distributed_backend="ddp",
+        #limit_train_batches=10,
+        #limit_val_batches=10,
         gradient_clip_val=conf["training"]["gradient_clipping"],
+        #resume_from_checkpoint="/root/asteroid/egs/dns_challenge/dccrn/exp/train_dns_bcd39db1/checkpoints-v3.ckpt"
     )
     trainer.fit(system)
 

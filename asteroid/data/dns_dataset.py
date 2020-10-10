@@ -43,16 +43,18 @@ class DNSDataset(data.Dataset):
         # Load mixture
         x_np, sr = sf.read(utt_info["mix"], dtype="float32")
         assert sr == self.sample_rate
-        x = torch.from_numpy(x_np)
+        start, stop = get_wav_random_start_stop(len(x_np), int(self.segment * self.sample_rate) if self.segment is not None else None)
+        x = torch.from_numpy(x_np[start:stop])
         # Load clean
-        speech = torch.from_numpy(sf.read(utt_info["clean"], dtype="float32")[0])
-        start, stop = get_wav_random_start_stop(len(x), int(self.segment * self.sample_rate) if self.segment is not None else None)
+        speech = torch.from_numpy(sf.read(utt_info["clean"], dtype="float32", start=start, stop=stop)[0])
+        #x = x/x.max() * 0.99
+        #speech = speech/speech.max() * 0.99
         if self.load_noise:
             # Load noise
-            noise = torch.from_numpy(sf.read(utt_info["noise"], dtype="float32")[0])
-            return x[start:stop], speech[start:stop], noise[start:stop]
+            noise = torch.from_numpy(sf.read(utt_info["noise"], dtype="float32", start=start, stop=stop)[0])
+            return x, speech, noise
         else:
-            return x[start:stop], speech[start:stop]
+            return x, speech
 
     def get_infos(self):
         """Get dataset infos (for publishing models).
