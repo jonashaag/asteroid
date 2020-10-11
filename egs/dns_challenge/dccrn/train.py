@@ -17,7 +17,7 @@ from asteroid.engine.system import System
 from asteroid.losses import singlesrc_neg_sisdr
 
 from ranger2020 import Ranger
-from warmup_scheduler import GradualWarmupScheduler
+#from warmup_scheduler import GradualWarmupScheduler
 
 # Keys which are not in the conf.yml file can be added here.
 # In the hierarchical dictionary created when parsing, the key `key` can be
@@ -111,7 +111,7 @@ def main(conf):
     )
     early_stopping = False
     if conf["training"]["early_stop"]:
-        early_stopping = EarlyStopping(monitor="val_loss", patience=5, verbose=True)
+        early_stopping = EarlyStopping(monitor="val_loss", patience=15, verbose=True)
     callbacks = [
         LearningRateMonitor(),
         #GPUStatsMonitor(),
