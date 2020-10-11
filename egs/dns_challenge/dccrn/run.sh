@@ -5,7 +5,7 @@ set -e
 set -o pipefail
 
 # Main storage directory. You'll need disk space to dump DNS dataset.
-storage_dir=/root/datasets/training_set_sept12/
+storage_dir=/root/datasets/training_set_sept12_dereverb/
 # If you want to clone the DNS-Challenge repo somewhere different
 clone_dir=  # optional
 

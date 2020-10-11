@@ -49,9 +49,14 @@ class DNSDataset(data.Dataset):
         speech = torch.from_numpy(sf.read(utt_info["clean"], dtype="float32", start=start, stop=stop)[0])
         #x = x/x.max() * 0.99
         #speech = speech/speech.max() * 0.99
+        if self.segment is not None:
+            x = torch.nn.functional.pad(x, (0, max(0, int(self.segment * self.sample_rate) - len(x))))
+            speech = torch.nn.functional.pad(speech, (0, max(0, int(self.segment * self.sample_rate) - len(speech))))
         if self.load_noise:
             # Load noise
             noise = torch.from_numpy(sf.read(utt_info["noise"], dtype="float32", start=start, stop=stop)[0])
+            if self.segment is not None:
+                noise = torch.nn.functional.pad(noise, (0, max(0, int(self.segment * self.sample_rate) - len(noise))))
             return x, speech, noise
         else:
             return x, speech
