@@ -38,7 +38,8 @@ class BaseUNet(torch.nn.Module):
         for idx, enc in enumerate(self.encoders):
             x = enc(x)
             enc_outs.append(x)
-        x = self.intermediate_layer(x)
+        if not isinstance(self.intermediate_layer, torch.nn.Identity):
+            x = torch.cat([x, self.intermediate_layer(x)], dim=1)
         for idx, (enc_out, dec) in enumerate(zip(reversed(enc_outs[:-1]), self.decoders)):
             x = dec(x)
             x = torch.cat([x, enc_out], dim=1)

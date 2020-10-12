@@ -82,7 +82,7 @@ def get_wav_random_start_stop(signal_len, desired_len=4 * 8000):
     return rand_start, stop
 
 
-def unet_decoder_args(encoders, *, skip_connections):
+def unet_decoder_args(encoders, *, skip_connections, first_has_skip_connection=False):
     """Get list of decoder arguments for upsampling (right) side of a symmetric u-net,
     given the arguments used to construct the encoder.
 
@@ -98,7 +98,7 @@ def unet_decoder_args(encoders, *, skip_connections):
     """
     decoder_args = []
     for enc_in_chan, enc_out_chan, enc_kernel_size, enc_stride, enc_padding in reversed(encoders):
-        if skip_connections and decoder_args:
+        if skip_connections and (first_has_skip_connection or decoder_args):
             skip_in_chan = enc_out_chan
         else:
             skip_in_chan = 0

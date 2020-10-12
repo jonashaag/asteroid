@@ -1,7 +1,9 @@
 from ..utils.generic_utils import unet_decoder_args
 
 
-def make_unet_encoder_decoder_args(encoder_args, decoder_args):
+def make_unet_encoder_decoder_args(
+    encoder_args, decoder_args, first_decoder_has_concatenative_skip_connection=False
+):
     encoder_args = [
         (
             in_chan,
@@ -14,7 +16,11 @@ def make_unet_encoder_decoder_args(encoder_args, decoder_args):
     ]
 
     if decoder_args == "auto":
-        decoder_args = unet_decoder_args(encoder_args, skip_connections=True)
+        decoder_args = unet_decoder_args(
+            encoder_args,
+            skip_connections=True,
+            first_has_skip_connection=first_decoder_has_concatenative_skip_connection,
+        )
 
     return encoder_args, decoder_args
 
