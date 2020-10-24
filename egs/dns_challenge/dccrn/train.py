@@ -37,16 +37,20 @@ def main(conf):
     numba.config.THREADING_LAYER = 'tbb'
 
     import ds
-    ds.set_paths(
+    ds.configure(
+        conf["data"]["segment"],
         conf["data"]["real_rirs_dir"],
         conf["data"]["dns_rirs_dir"],
         conf["data"]["dns_noise_dir"],
         conf["data"]["dns_clean_dir"],
     )
-    ds.bench()
-    return
+    #ds.bench()
+    #return
 
     train_ds, val_ds = ds.make_ds()
+
+    #train_ds.getitem(166507, 4415633321459280479, log=True)
+    #return
 
     train_loader = DataLoader(
         train_ds,
@@ -56,12 +60,6 @@ def main(conf):
         drop_last=True,
         pin_memory=True
     )
-
-
-    import tqdm
-    for _ in tqdm.tqdm(train_loader):
-        pass
-    return
 
     val_loader = DataLoader(
         val_ds,
@@ -145,7 +143,7 @@ def main(conf):
         default_root_dir=exp_dir,
         gpus=gpus,
         benchmark=True,
-        #distributed_backend="ddp",
+        distributed_backend="ddp",
         #limit_train_batches=10,
         #limit_val_batches=10,
         gradient_clip_val=conf["training"]["gradient_clipping"],
@@ -162,7 +160,7 @@ def main(conf):
     system.cpu()
 
     to_save = system.model.serialize()
-    to_save.update(train_set.get_infos())
+    #to_save.update(train_set.get_infos())
     torch.save(to_save, os.path.join(exp_dir, "best_model.pth"))
 
 
