@@ -144,10 +144,11 @@ def main(conf):
         gpus=gpus,
         benchmark=True,
         distributed_backend="ddp",
+        val_check_interval=0.34,
         #limit_train_batches=10,
         #limit_val_batches=10,
         gradient_clip_val=conf["training"]["gradient_clipping"],
-        #resume_from_checkpoint="/root/asteroid/egs/dns_challenge/dccrn/exp/train_dns_bcd39db1/checkpoints-v3.ckpt"
+        resume_from_checkpoint="/root/asteroid/egs/dns_challenge/dccrn/exp/tmp/checkpoints.ckpt",
     )
     trainer.fit(system)
 
