@@ -9,8 +9,10 @@ import tqdm.contrib.concurrent
 import itu_r_468_weighting.filter
 
 
-def set_paths(real_irs_path, dns_irs_path, dns_noise_path, dns_clean_path):
-    global real_rirs_files, dns_irs_files, dns_noise_files, dns_clean_files
+def configure(len_s, real_irs_path, dns_irs_path, dns_noise_path, dns_clean_path):
+    global len_samples, real_rirs_files, dns_irs_files, dns_noise_files, dns_clean_files
+
+    len_samples = int(len_s * 16000)
 
     real_rirs_files = glob.glob(real_irs_path + "/**/*.wav", recursive=True)
     assert len(real_rirs_files) > 10000
@@ -80,18 +82,24 @@ class MyDs(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.clean_files)
 
+
     def __getitem__(self, idx):
-        if self.deterministic:
-            torch_seed = idx
-        else:
-            torch_seed = torch.seed()
+        return self.getitem(idx)
+
+    def getitem(self, idx, torch_seed=None, log=False):
+        if torch_seed is None:
+            if self.deterministic:
+                torch_seed = idx
+            else:
+                torch_seed = torch.seed()
         rand = np.random.default_rng(torch_seed)
         while True:
             try:
-                clean_f = rand.choice(self.clean_files)
-                x, _, _, _, y = randmix(rand, clean_f)
-                return x, y
+                clean_f = np_choice(rand, self.clean_files)
+                x, _, _, _, y = randmix(rand, clean_f, log=log)
+                return x.astype("float32"), y.astype("float32")
             except Exception as err:
+                import traceback; traceback.print_stack()
                 print(f"Error generating sample for {idx} (det: {self.deterministic}, torch seed: {torch_seed}): {err}")
 
 
@@ -394,7 +402,7 @@ def rand_biquad(rand, sr, min_cf, max_cf, min_q, max_q, data):
     filt.band_pass(sr, rand.uniform(min_cf, max_cf), rand.uniform(min_q, max_q))
     out = np.zeros_like(data)
     filt.process(data, out)
-    return rand.uniform(1, 5) * out + data
+    return rand.uniform(1, 5) * (out + 1e-10) + data
 
 
 def rand_lowpass(rand, sr, min_cutoff, max_cutoff, min_q, max_q, data):
@@ -407,20 +415,21 @@ def rand_lowpass(rand, sr, min_cutoff, max_cutoff, min_q, max_q, data):
     return out
 
 
-def rand_pitch_shift(rand, sr, min_speedup, max_speedup, data):
+def rand_pitch_shift(rand, sr, min_speedup, max_speedup, data, fast_ok=False):
     return librosa.resample(
         data, sr, int(rand.uniform(min_speedup, max_speedup) * sr),
+        res_type="kaiser_fast" if fast_ok else "kaiser_best"
     )
 
 
-def rand_eq_pitch(rand, data, always_eq, enable_biquad, enable_lowpass, log=False):
+def rand_eq_pitch(rand, data, always_eq, enable_biquad, enable_lowpass, fast_ok=False, log=False):
     if always_eq or np_proba(rand, 1/2):
         if enable_biquad and np_proba(rand, 1/3):
             if log: print("biqad")
             data = rand_biquad(rand, 16000,0,8000,0.5,1.5,data)
         else:
             if log: print("shelv")
-            t = rand.choice(("low_shelf", "high_shelf"))
+            t = np_choice(rand, ("low_shelf", "high_shelf"))
             data = rand_shelv(
                 rand, 16000,
                 0,
@@ -430,7 +439,7 @@ def rand_eq_pitch(rand, data, always_eq, enable_biquad, enable_lowpass, log=Fals
                 15, t, data)
     if np_proba(rand, 1/2):
         if log: print("pitch")
-        data = rand_pitch_shift(rand, 16000, 0.95, 1.05, data)
+        data = rand_pitch_shift(rand, 16000, 0.95, 1.05, data, fast_ok=fast_ok)
     # Never attenuate high frequencies.
     # This is also partly covered by piping through codecs.
     #if np_proba(rand, 3/100):
@@ -453,11 +462,11 @@ def rand_clipping(rand, min_percentile, max_percentile, *data):
 
 def loadrandir(rand, sr, augment, n, log=False):
     if np_proba(rand, 1/10):
-        ir_f = rand.choice(dns_irs_files)
+        ir_f = np_choice(rand, dns_irs_files)
     else:
-        ir_f = rand.choice(real_rirs_files)
-    if log: print(ir)
-    ir, sr_ = librosa.load(ir_f,sr=None,duration=3)
+        ir_f = np_choice(rand, real_rirs_files)
+    if log: print(ir_f)
+    ir, sr_ = librosa.load(ir_f, sr=None, duration=3, dtype="float64")
     assert sr_ == sr, (ir_f, sr_, sr)
     ir = fast_trim_zeros(ir)
 
@@ -466,7 +475,7 @@ def loadrandir(rand, sr, augment, n, log=False):
             if log: print("Speedup IR")
             ir = librosa.resample(ir, sr, int(rand.uniform(0.8, 1.2) * sr))
 
-    ir = ir / np.abs(ir).max()
+    i = safe_peaknorm(ir)
     ir = np.pad(ir, (int(0.0025 * sr), 0))
     skip = int(np.abs(ir).argmax() - 0.0025 * sr)
     assert skip >= 0, ("skip", skip)
@@ -537,24 +546,24 @@ def rand_codec(rand, sr, *data, log=False):
         )
     if log: print("Run", ffmpeg_cmd)
     for idx, d in enumerate(data):
-        assert "float32" in str(d.dtype)
+        assert "float64" in str(d.dtype)
         try:
-            proc = subprocess.run(["sh", "-c", ffmpeg_cmd], input=d.tobytes(), capture_output=True,check=True)
+            proc = subprocess.run(["sh", "-c", ffmpeg_cmd], input=d.astype("float32").tobytes(), capture_output=True,check=True)
         except subprocess.CalledProcessError as err:
             raise RuntimeError(f"Error in ffmpeg on item {idx}:" + err.stderr.decode("ascii", "ignore")) from err
-        out = np.frombuffer(proc.stdout, "float32")
+        out = np.frombuffer(proc.stdout, "float32").astype("float64")
         if encoder == "libopus":
             # Opus will always output 48 kHz
-            out = librosa.resample(out, 48_000, sr)
-        _, out = align_audio(sr, int(0.05 * sr), 0, d, out)  # comparing less than entire signal is unstable
+            out = librosa.resample(out, 48_000, sr, res_type="kaiser_fast")
+        _, out = align_audio(sr, int(0.1 * sr), 0, d, out)  # comparing less than entire signal is unstable
         assert np.abs(1 - d.nbytes/out.nbytes) < 0.2, ffmpeg_cmd
         yield librosa.util.fix_length(out, len(d))
 
 
 def align_audio(sr, maxoff_samples, lookahead_samples, target, pred):
     """Align pred with target: If pred is delayed, cut some samples. If target is delayed, pad pred."""
-    assert "float32" in str(target.dtype)
-    assert "float32" in str(pred.dtype)
+    assert "float64" in str(target.dtype)
+    assert "float64" in str(pred.dtype)
     dist = align_dist(sr, maxoff_samples, lookahead_samples, target, pred)
     if dist < 0:
         return dist, np.pad(pred, (-dist, 0))
@@ -569,7 +578,7 @@ def safe_mse(a, b):
     return ((a-b)**2).mean()
 
 
-@numba.jit("int64(int64, int64, optional(int64), Array(float32, 1, 'C', readonly=True), Array(float32, 1, 'C', readonly=True))", nopython=True)
+@numba.jit("int64(int64, int64, optional(int64), Array(float64, 1, 'C', readonly=True), Array(float64, 1, 'C', readonly=True))", nopython=True)
 def align_dist(sr, maxoff_samples, lookahead_samples, target, pred):
     if lookahead_samples <= 0:
         lookahead_samples = max(len(target), len(pred))
@@ -622,13 +631,10 @@ def safe_peaknorm(a):
     if np.all(a == 0):
         return a
     else:
-        return a / a.max()
+        return a / (np.abs(a).max() + 1e-10)
 
 
-np.seterr("raise")
-
-
-LEN = 5 * 16000
+#np.seterr("raise")
 
 
 def randmix(rand, speech_f, log=False):
@@ -636,12 +642,13 @@ def randmix(rand, speech_f, log=False):
 
     if np_proba(rand, 3/100):
         if log: print("no speech")
-        speech = np.zeros((LEN,))
+        speech = np.zeros((len_samples,))
         speech_f = None
     else:
-        speech, sr = librosa.load(speech_f, sr=None)
+        speech, sr = librosa.load(speech_f, sr=None, dtype="float64")
         assert sr == 16000, (speech_f, "sr", sr)
         speech = fast_trim_zeros(speech)
+        speech = safe_peaknorm(speech)
 
     if len(fast_trim_zeros(speech)) and np_proba(rand, 1/5):
         if log: print("no noise")
@@ -649,10 +656,12 @@ def randmix(rand, speech_f, log=False):
     else:
         noise_f = np_choice(rand, dns_noise_files)
         if log: print(noise_f)
-        noise, sr = librosa.load(noise_f, sr=None)
+        noise, sr = librosa.load(noise_f, sr=None, dtype="float64")
         assert sr == 16000, (noise_f, "sr", sr)
+        noise = safe_peaknorm(noise)
 
-        noise = rand_eq_pitch(rand, noise, always_eq=False, enable_biquad=False, enable_lowpass=True, log=log)
+        if np_proba(rand, 4/5):  # performance optim
+            noise = rand_eq_pitch(rand, noise, always_eq=False, enable_biquad=False, enable_lowpass=True, log=log)
 
     if np_proba(rand, 4/5):
         if np_proba(rand, 3/5):
@@ -669,37 +678,47 @@ def randmix(rand, speech_f, log=False):
             noise_x = noise
     else:
         if log: print("EQ on speech")
-        speech_y = speech_x = rand_eq_pitch(rand, speech, always_eq=True, enable_biquad=True, enable_lowpass=True, log=log)
+        speech_y = speech_x = rand_eq_pitch(rand, speech, always_eq=True, enable_biquad=True, enable_lowpass=True, fast_ok=True, log=log)
         noise_x = noise
 
-    speech_x, speech_y = crop_or_pad(rand, LEN, speech_x, speech_y)
-    noise_x, = crop_or_pad(rand, LEN, noise_x)
+    speech_x, speech_y = crop_or_pad(rand, len_samples, speech_x, speech_y)
+    noise_x, = crop_or_pad(rand, len_samples, noise_x)
 
     if np_proba(rand, 1/20):
         if log: print("clipping")
         speech_x, noise_x, = rand_clipping(rand, 0.99, 1, speech_x, noise_x)
 
 
-    sw = itu_r_468_weighted(np.abs(librosa.stft(speech_x, 512)), 512, 16000)
-    nw = itu_r_468_weighted(np.abs(librosa.stft(noise_x, 512)), 512, 16000)
+    assert "float64" in str(speech_x.dtype)
+    assert "float64" in str(noise_x.dtype)
+    speech_x_magspec = np.abs(librosa.stft(speech_x + 1e-20, 512))
+    noise_x_magspec = np.abs(librosa.stft(noise_x + 1e-20, 512))
+    sw = itu_r_468_weighted(speech_x_magspec, 512, 16000)
+    nw = itu_r_468_weighted(noise_x_magspec, 512, 16000)
     r = (
         librosa.db_to_amplitude(
             librosa.amplitude_to_db(sw).min() - librosa.amplitude_to_db(nw).min())
         * rand.uniform(0.01, 0.05))
 
-    mix = speech_x + r * noise_x
+    if log: print("r", r, noise_x.min())
+    noise_xr = (r + 1e-10) * (noise_x + 1e-10)
+    mix = speech_x + noise_xr
 
     # Codec is by far the slowest, can increase to 1/5 if CPU fast enough
-    if speech_f is not None and speech_f.endswith(".wav") and np_proba(rand, 1/10):
+    if speech_f is not None and speech_f.endswith(".wav") and np_proba(rand, 1/20):
         mix, speech_x, noise_x, speech_y = rand_codec(rand, 16000, mix, speech_x, noise_x, speech_y, log=log)
 
-    mix, speech_x, noise_x, speech_y = crop_or_pad(rand, LEN, mix, speech_x, noise_x, speech_y)
+    mix, speech_x, noise_x, speech_y = crop_or_pad(rand, len_samples, mix, speech_x, noise_x, speech_y)
+
+    librosa.util.valid_audio(mix)
+    librosa.util.valid_audio(speech_y)
 
     return map(safe_peaknorm, [mix, speech, speech_x, noise_x, speech_y])
 
 
 def bench1():
-    *_, = randmix(np.random.default_rng(), "/root/DNS-Challenge-clean-nonsilent/read_speech/book_01398_chp_0030_reader_03743_46_nonsilent_000_28672_74368.wav")
+    rand = np.random.default_rng()
+    *_, = randmix(rand, np_choice(rand, dns_clean_files))
 
 def bench():
     import cProfile
@@ -707,7 +726,7 @@ def bench():
         bench1()
     pr = cProfile.Profile()
     pr.enable()
-    for _ in range(20):
+    for _ in range(50):
         bench1()
     pr.create_stats()
     import pstats
