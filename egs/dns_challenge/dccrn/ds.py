@@ -571,7 +571,7 @@ def align_audio(sr, maxoff_samples, lookahead_samples, target, pred):
         return dist, pred[dist:]
 
 
-@numba.jit(nopython=True, parallel=True, inline="always")
+@numba.jit("float64(Array(float64, 1, 'A', readonly=True), Array(float64, 1, 'A', readonly=True))", nopython=True, inline="always")
 def safe_mse(a, b):
     a = a[:min(len(a), len(b))]
     b = b[:len(a)]
@@ -705,7 +705,7 @@ def randmix(rand, speech_f, log=False):
     mix = speech_x + noise_xr
 
     # Codec is by far the slowest, can increase to 1/5 if CPU fast enough
-    if speech_f is not None and speech_f.endswith(".wav") and np_proba(rand, 1/20):
+    if speech_f is not None and speech_f.endswith(".wav") and np_proba(rand, 1/13):
         mix, speech_x, noise_x, speech_y = rand_codec(rand, 16000, mix, speech_x, noise_x, speech_y, log=log)
 
     mix, speech_x, noise_x, speech_y = crop_or_pad(rand, len_samples, mix, speech_x, noise_x, speech_y)
