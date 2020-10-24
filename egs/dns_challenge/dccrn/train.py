@@ -8,10 +8,9 @@ from torch.utils.data import DataLoader, random_split
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor, GPUStatsMonitor
 
-from asteroid import DCCRNet, DCUNet
+from asteroid import DCCRNet
 from asteroid.engine import schedulers
 
-from asteroid.data import DNSDataset
 from asteroid.engine.optimizers import make_optimizer
 from asteroid.engine.system import System
 from asteroid.losses import singlesrc_neg_sisdr
@@ -34,21 +33,38 @@ def loss_func (est_target, target):
 
 
 def main(conf):
-    total_set = DNSDataset(conf["data"]["json_dir"], segment=conf["data"]["segment"], load_noise=False)
-    train_len = int(len(total_set) * (1 - conf["data"]["val_prop"]))
-    val_len = len(total_set) - train_len
-    train_set, val_set = random_split(total_set, [train_len, val_len])
+    import numba
+    numba.config.THREADING_LAYER = 'tbb'
+
+    import ds
+    ds.set_paths(
+        conf["data"]["real_rirs_dir"],
+        conf["data"]["dns_rirs_dir"],
+        conf["data"]["dns_noise_dir"],
+        conf["data"]["dns_clean_dir"],
+    )
+    ds.bench()
+    return
+
+    train_ds, val_ds = ds.make_ds()
 
     train_loader = DataLoader(
-        train_set,
+        train_ds,
         shuffle=True,
         batch_size=conf["training"]["batch_size"],
         num_workers=conf["training"]["num_workers"],
         drop_last=True,
         pin_memory=True
     )
+
+
+    import tqdm
+    for _ in tqdm.tqdm(train_loader):
+        pass
+    return
+
     val_loader = DataLoader(
-        val_set,
+        val_ds,
         shuffle=False,
         batch_size=conf["training"]["batch_size"],
         num_workers=conf["training"]["num_workers"],
@@ -152,7 +168,7 @@ def main(conf):
 
 if __name__ == "__main__":
     import yaml
-    from pprint import pprint as print
+    from pprint import pprint
     from asteroid.utils import prepare_parser_from_dict, parse_args_as_dict
 
     # We start with opening the config file conf.yml as a dictionary from
@@ -168,5 +184,5 @@ if __name__ == "__main__":
     # the attributes in an non-hierarchical structure. It can be useful to also
     # have it so we included it here but it is not used.
     arg_dic, plain_args = parse_args_as_dict(parser, return_plain_args=True)
-    print(arg_dic)
+    pprint(arg_dic)
     main(arg_dic)
