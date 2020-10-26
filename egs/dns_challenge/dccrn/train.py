@@ -61,6 +61,10 @@ def main(conf):
         pin_memory=True
     )
 
+    #import tqdm
+    #for _ in tqdm.tqdm(train_loader):
+    #    pass
+
     val_loader = DataLoader(
         val_ds,
         shuffle=False,

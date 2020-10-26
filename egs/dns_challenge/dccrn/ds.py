@@ -7,6 +7,7 @@ import numpy as np
 import scipy
 import tqdm.contrib.concurrent
 import itu_r_468_weighting.filter
+import fastalign
 
 
 def configure(len_s, real_irs_path, dns_irs_path, dns_noise_path, dns_clean_path):
@@ -555,7 +556,7 @@ def rand_codec(rand, sr, *data, log=False):
         if encoder == "libopus":
             # Opus will always output 48 kHz
             out = librosa.resample(out, 48_000, sr, res_type="kaiser_fast")
-        _, out = align_audio(sr, int(0.1 * sr), 0, d, out)  # comparing less than entire signal is unstable
+        _, out = align_audio(sr, int(0.2 * sr), 0, d, out)  # comparing less than entire signal is unstable
         assert np.abs(1 - d.nbytes/out.nbytes) < 0.2, ffmpeg_cmd
         yield librosa.util.fix_length(out, len(d))
 
@@ -571,30 +572,10 @@ def align_audio(sr, maxoff_samples, lookahead_samples, target, pred):
         return dist, pred[dist:]
 
 
-@numba.jit("float64(Array(float64, 1, 'A', readonly=True), Array(float64, 1, 'A', readonly=True))", nopython=True, inline="always")
-def safe_mse(a, b):
-    a = a[:min(len(a), len(b))]
-    b = b[:len(a)]
-    return ((a-b)**2).mean()
-
-
-@numba.jit("int64(int64, int64, optional(int64), Array(float64, 1, 'C', readonly=True), Array(float64, 1, 'C', readonly=True))", nopython=True)
 def align_dist(sr, maxoff_samples, lookahead_samples, target, pred):
     if lookahead_samples <= 0:
         lookahead_samples = max(len(target), len(pred))
-    # Very manual loop optimized for numba
-    min_idx = 0
-    min_val = 9999
-    for i in range(maxoff_samples):
-        d1 = safe_mse(target[i:lookahead_samples], pred)
-        d2 = safe_mse(pred[i:lookahead_samples], target)
-        if d1 < min_val:
-            min_idx = -i
-            min_val = d1
-        if d2 < min_val:
-            min_idx = i
-            min_val = d2
-    return min_idx
+    return fastalign.fastalign(pred.astype("float32"), target.astype("float32"), maxoff_samples, lookahead_samples)
 
 
 def np_proba(rand, p):
@@ -705,7 +686,7 @@ def randmix(rand, speech_f, log=False):
     mix = speech_x + noise_xr
 
     # Codec is by far the slowest, can increase to 1/5 if CPU fast enough
-    if speech_f is not None and speech_f.endswith(".wav") and np_proba(rand, 1/13):
+    if speech_f is not None and speech_f.endswith(".wav") and np_proba(rand, 1/7):
         mix, speech_x, noise_x, speech_y = rand_codec(rand, 16000, mix, speech_x, noise_x, speech_y, log=log)
 
     mix, speech_x, noise_x, speech_y = crop_or_pad(rand, len_samples, mix, speech_x, noise_x, speech_y)
