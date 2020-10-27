@@ -387,6 +387,12 @@ def itu_r_468_weighted(spec, n_fft, sr):
         for f in librosa.fft_frequencies(sr, n_fft)])[:, None]
 
 
+def itu_r_468_weighted_torch(spec, n_fft, sr):
+    return spec * torch.tensor([
+        itu_r_468_weighting.filter.r468(f, "1khz", "factor")
+        for f in librosa.fft_frequencies(sr, n_fft)], device=spec.device)[None, None]
+
+
 def rand_shelv(rand, sr, min_cutoff, max_cutoff, min_q, max_q, min_g, max_g, t, data):
     f = rand.uniform(min_cutoff, max_cutoff)
     q = rand.uniform(min_q, max_q)

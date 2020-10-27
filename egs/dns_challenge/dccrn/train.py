@@ -31,11 +31,30 @@ parser.add_argument("--exp_dir", default="exp/tmp", help="Full path to save best
 def loss_func (est_target, target):
     return singlesrc_neg_sisdr(est_target.squeeze(1), target).mean()
 
+from asteroid.filterbanks import make_enc_dec
+from ds import itu_r_468_weighted_torch
+asteroid_stft, _ = make_enc_dec(
+    "stft",
+    kernel_size=512,
+    n_filters=512,
+    sample_rate=16000.0,
+)
+asteroid_stft = asteroid_stft.cuda()
+
+def loss_func(est_target, target_wav):
+    from asteroid.filterbanks.transforms import take_mag
+    est_wav, est_stft = est_target
+    target_wav = target_wav.unsqueeze(1)
+    assert len(est_wav.shape) == 3, est_wav.shape
+    assert len(target_wav.shape) == 3, target_wav.shape
+    assert len(est_stft.shape) == 4, est_stft.shape
+    target_stft = asteroid_stft(target_wav)
+    magmse = ((take_mag(est_stft) - take_mag(target_stft))).abs().mean(dim=-1)
+    magmse = itu_r_468_weighted_torch(magmse, 512, 16000).mean()
+    wavmse = ((est_wav - target_wav)).abs().mean()
+    return 1.5 * magmse + 1 * wavmse
 
 def main(conf):
-    import numba
-    numba.config.THREADING_LAYER = 'tbb'
-
     import ds
     ds.configure(
         conf["data"]["segment"],
@@ -83,7 +102,7 @@ def main(conf):
     scheduler = None
     if conf["training"]["half_lr"]:
         scheduler = {
-            "scheduler": ReduceLROnPlateau(optimizer=optimizer, factor=0.5, patience=5, min_lr=2e-4),
+            "scheduler": ReduceLROnPlateau(optimizer=optimizer, factor=0.5, patience=5),
             "monitor": "val_loss",
             "interval": "epoch",
             "frequency": 1,
@@ -125,7 +144,7 @@ def main(conf):
     # Define callbacks
     checkpoint_dir = os.path.join(exp_dir, "checkpoints/")
     checkpoint = ModelCheckpoint(
-        checkpoint_dir, monitor="val_loss", mode="min", save_top_k=5, verbose=True
+        checkpoint_dir, monitor="val_loss", mode="min", save_top_k=5, save_last=True, verbose=True
     )
     early_stopping = False
     if conf["training"]["early_stop"]:
