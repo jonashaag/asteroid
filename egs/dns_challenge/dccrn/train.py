@@ -28,7 +28,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--exp_dir", default="exp/tmp", help="Full path to save best validation model")
 
 
-if 1:
+if 0:
     from asteroid.filterbanks import make_enc_dec
     from ds import itu_r_468_weighted_torch
     asteroid_stft, _ = make_enc_dec(
@@ -74,7 +74,7 @@ else:
 
         def __getitem__(self, idx):
             rand = np.random.default_rng(idx)
-            return rand.uniform(size=(3*16000,).astype("float32"), rand.uniform(size=(3*16000,)).astype("float32")
+            return rand.uniform(size=(3*16000,)).astype("float32"), rand.uniform(size=(3*16000,)).astype("float32")
 
     def loss_func (est_target, target):
         return (est_target[0].squeeze(1) - target).abs().mean()
@@ -84,7 +84,7 @@ else:
 
 
 def main(conf):
-    val_ds, train_ds = getds()
+    val_ds, train_ds = getds(conf)
     train_loader = DataLoader(
         train_ds,
         shuffle=True,
@@ -168,7 +168,7 @@ def main(conf):
 
     # Don't ask GPU if they are not available.
     gpus = -1 if torch.cuda.is_available() else None
-    assert torch.cuda.is_available()
+    #assert torch.cuda.is_available()
     trainer = pl.Trainer(
             #weights_summary='full',
         callbacks=callbacks,
@@ -178,12 +178,12 @@ def main(conf):
         default_root_dir=exp_dir,
         gpus=gpus,
         benchmark=True,
-        distributed_backend="ddp",
-        val_check_interval=0.34,
+        #distributed_backend="ddp",
+        #val_check_interval=0.34,
         #limit_train_batches=10,
         #limit_val_batches=10,
         gradient_clip_val=conf["training"]["gradient_clipping"],
-        resume_from_checkpoint="/root/asteroid/egs/dns_challenge/dccrn/exp/tmp/checkpoints.ckpt",
+        #resume_from_checkpoint="/root/asteroid/egs/dns_challenge/dccrn/exp/tmp/checkpoints.ckpt",
     )
     trainer.fit(system)
 

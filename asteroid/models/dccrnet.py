@@ -1,3 +1,4 @@
+from .. import complex_nn
 from ..masknn.recurrent import DCCRMaskNet
 from .dcunet import BaseDCUNet
 
@@ -25,6 +26,15 @@ class DCCRNet(BaseDCUNet):  # CHECK-JIT
             *args,
             stft_kernel_size=stft_kernel_size,
             sample_rate=sample_rate,
-            masknet_kwargs={"n_freqs": stft_kernel_size // 2 + 1, **(masknet_kwargs or {})},
+            masknet_kwargs={"n_freqs": stft_kernel_size // 2, **(masknet_kwargs or {})},
             **kwargs,
         )
+
+    def postprocess_encoded(self, tf_rep):
+        return complex_nn.as_torch_complex(tf_rep)[..., :-1, :]
+
+    def postprocess_masked(self, masked_tf_rep):
+        # pad: [0, 0, ..., 0, 1, 0, 0]
+        pad = torch.zeros(2 * masked_tf_rep.ndim)
+        pad[-3] = 1
+        return from_torchaudio(torch.view_as_real(torch.pad(masked_tf_rep, pad)))

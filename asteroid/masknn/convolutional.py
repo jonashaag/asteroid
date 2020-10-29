@@ -454,6 +454,7 @@ class DCUNetComplexDecoderBlock(nn.Module):  # CHECK-JIT
         kernel_size,
         stride,
         padding,
+        output_padding=(0, 0),
         norm_type="bN",
         activation="leaky_relu",
     ):
@@ -464,9 +465,10 @@ class DCUNetComplexDecoderBlock(nn.Module):  # CHECK-JIT
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
+        self.output_padding = output_padding
 
         self.deconv = complex_nn.ComplexConvTranspose2d(
-            in_chan, out_chan, kernel_size, stride, padding
+            in_chan, out_chan, kernel_size, stride, padding, output_padding
         )
 
         self.norm = norms.get_complex(norm_type)(out_chan)
