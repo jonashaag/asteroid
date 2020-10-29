@@ -28,49 +28,63 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--exp_dir", default="exp/tmp", help="Full path to save best validation model")
 
 
-def loss_func (est_target, target):
-    return singlesrc_neg_sisdr(est_target.squeeze(1), target).mean()
+if 1:
+    from asteroid.filterbanks import make_enc_dec
+    from ds import itu_r_468_weighted_torch
+    asteroid_stft, _ = make_enc_dec(
+        "stft",
+        kernel_size=512,
+        n_filters=512,
+        sample_rate=16000.0,
+    )
+    asteroid_stft = asteroid_stft.cuda()
 
-from asteroid.filterbanks import make_enc_dec
-from ds import itu_r_468_weighted_torch
-asteroid_stft, _ = make_enc_dec(
-    "stft",
-    kernel_size=512,
-    n_filters=512,
-    sample_rate=16000.0,
-)
-asteroid_stft = asteroid_stft.cuda()
+    def loss_func(est_target, target_wav):
+        from asteroid.filterbanks.transforms import take_mag
+        est_wav, est_stft = est_target
+        target_wav = target_wav.unsqueeze(1)
+        assert len(est_wav.shape) == 3, est_wav.shape
+        assert len(target_wav.shape) == 3, target_wav.shape
+        assert len(est_stft.shape) == 4, est_stft.shape
+        target_stft = asteroid_stft(target_wav)
+        magmse = ((take_mag(est_stft) - take_mag(target_stft))).abs().mean(dim=-1)
+        magmse = itu_r_468_weighted_torch(magmse, 512, 16000).mean()
+        wavmse = ((est_wav - target_wav)).abs().mean()
+        return 1.5 * magmse + 1 * wavmse
 
-def loss_func(est_target, target_wav):
-    from asteroid.filterbanks.transforms import take_mag
-    est_wav, est_stft = est_target
-    target_wav = target_wav.unsqueeze(1)
-    assert len(est_wav.shape) == 3, est_wav.shape
-    assert len(target_wav.shape) == 3, target_wav.shape
-    assert len(est_stft.shape) == 4, est_stft.shape
-    target_stft = asteroid_stft(target_wav)
-    magmse = ((take_mag(est_stft) - take_mag(target_stft))).abs().mean(dim=-1)
-    magmse = itu_r_468_weighted_torch(magmse, 512, 16000).mean()
-    wavmse = ((est_wav - target_wav)).abs().mean()
-    return 1.5 * magmse + 1 * wavmse
+    def getds(conf):
+        import ds
+        ds.configure(
+            conf["data"]["segment"],
+            conf["data"]["real_rirs_dir"],
+            conf["data"]["dns_rirs_dir"],
+            conf["data"]["dns_noise_dir"],
+            conf["data"]["dns_clean_dir"],
+        )
+        #ds.bench(); return
+        train_ds, val_ds = ds.make_ds()
+        #train_ds.getitem(166507, 4415633321459280479, log=True); return
+        return train_ds, val_ds
+else:
+    import numpy as np
+
+    class MyDs(torch.utils.data.Dataset):
+        def __len__(self):
+            return 100_000
+
+        def __getitem__(self, idx):
+            rand = np.random.default_rng(idx)
+            return rand.uniform(size=(3*16000,).astype("float32"), rand.uniform(size=(3*16000,)).astype("float32")
+
+    def loss_func (est_target, target):
+        return (est_target[0].squeeze(1) - target).abs().mean()
+
+    def getds(conf):
+           return MyDs(), MyDs()
+
 
 def main(conf):
-    import ds
-    ds.configure(
-        conf["data"]["segment"],
-        conf["data"]["real_rirs_dir"],
-        conf["data"]["dns_rirs_dir"],
-        conf["data"]["dns_noise_dir"],
-        conf["data"]["dns_clean_dir"],
-    )
-    #ds.bench()
-    #return
-
-    train_ds, val_ds = ds.make_ds()
-
-    #train_ds.getitem(166507, 4415633321459280479, log=True)
-    #return
-
+    val_ds, train_ds = getds()
     train_loader = DataLoader(
         train_ds,
         shuffle=True,
@@ -80,9 +94,7 @@ def main(conf):
         pin_memory=True
     )
 
-    #import tqdm
-    #for _ in tqdm.tqdm(train_loader):
-    #    pass
+    #import tqdm; for _ in tqdm.tqdm(train_loader): pass
 
     val_loader = DataLoader(
         val_ds,
