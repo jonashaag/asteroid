@@ -19,9 +19,9 @@ def preprocess_dns(in_dir, out_dir="./data"):
     mix_wavs = glob.glob(os.path.join(in_dir, "noisy/*.wav"))
     mix_dic = make_wav_id_dict(mix_wavs)
 
-    #noise_wavs = glob.glob(os.path.join(in_dir, "noise/*.wav"))
-    #noise_dic = make_wav_id_dict(noise_wavs)
-    assert clean_dic.keys() == mix_dic.keys()# == noise_dic.keys()
+    # noise_wavs = glob.glob(os.path.join(in_dir, "noise/*.wav"))
+    # noise_dic = make_wav_id_dict(noise_wavs)
+    assert clean_dic.keys() == mix_dic.keys()  # == noise_dic.keys()
     file_infos = {
         k: dict(
             mix=mix_dic[k],

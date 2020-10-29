@@ -18,9 +18,7 @@ from asteroid.utils import get_wav_random_start_stop
 from local.preprocess_dns import make_wav_id_dict
 
 parser = argparse.ArgumentParser()
-parser.add_argument(
-    "--checkpoint", type=str, required=True, help="Model to use (.ckpt)"
-)
+parser.add_argument("--checkpoint", type=str, required=True, help="Model to use (.ckpt)")
 parser.add_argument(
     "--test_dir", type=str, required=True, help="Test directory including wav files"
 )
@@ -46,7 +44,7 @@ def main(conf):
     if conf["use_gpu"]:
         model = model.cuda()
     # Evaluate performances separately w/ and w/o reverb
-    for subdir in [""]:#["with_reverb", "no_reverb"]:
+    for subdir in [""]:  # ["with_reverb", "no_reverb"]:
         dict_list = get_wavs_dict_list(os.path.join(conf["test_dir"], subdir))
         save_dir = os.path.join(conf["exp_dir"], subdir + "examples/")
         os.makedirs(save_dir, exist_ok=True)
@@ -103,7 +101,15 @@ def evaluate(dict_list, model, conf, save_dir=None):
     for idx, wav_dic in enumerate(tqdm(dict_list)):
         # Forward the network on the mixture.
         noisy_np, clean_np, fs = load_wav_dic(wav_dic)
-        start, stop = get_wav_random_start_stop(len(noisy_np), int(conf["train_conf"]["data"]["segment"] * conf["train_conf"]["data"].get("sample_rate", 16000)) if conf["train_conf"]["data"].get("segment") is not None else None)
+        start, stop = get_wav_random_start_stop(
+            len(noisy_np),
+            int(
+                conf["train_conf"]["data"]["segment"]
+                * conf["train_conf"]["data"].get("sample_rate", 16000)
+            )
+            if conf["train_conf"]["data"].get("segment") is not None
+            else None,
+        )
         noisy_np = noisy_np[start:stop]
         clean_np = clean_np[start:stop]
         with torch.no_grad():

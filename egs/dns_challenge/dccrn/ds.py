@@ -61,15 +61,19 @@ def make_split(it, key, splits):
 
 
 def grouper(f):
-    if "_reader_" in f: return f.split("_reader_")[1].split("_")[0]
-    if "AI" in f and "male/" in f: return f.split("male/")[1].split("/")[0]
-    if "FULL/" in f: return f.split("FULL/")[1].split("/")[0]
+    if "_reader_" in f:
+        return f.split("_reader_")[1].split("_")[0]
+    if "AI" in f and "male/" in f:
+        return f.split("male/")[1].split("/")[0]
+    if "FULL/" in f:
+        return f.split("FULL/")[1].split("/")[0]
     return str((hash(f) % 313) % 10)
 
 
 def make_ds():
     (train_spks, train_clean), (val_spks, val_clean) = make_split(
-        dns_clean_files, grouper, [0.95, 0.05])
+        dns_clean_files, grouper, [0.95, 0.05]
+    )
     print(f"Train: # spks: {len(train_spks)}, # elems: {len(train_clean)}")
     print(f"Val: # spks: {len(val_spks)}, # elems: {len(val_clean)}")
     return MyDs(train_clean, deterministic=False), MyDs(val_clean, deterministic=False)
@@ -82,7 +86,6 @@ class MyDs(torch.utils.data.Dataset):
 
     def __len__(self):
         return len(self.clean_files)
-
 
     def __getitem__(self, idx):
         return self.getitem(idx)
@@ -100,13 +103,18 @@ class MyDs(torch.utils.data.Dataset):
                 x, _, _, _, y = randmix(rand, clean_f, log=log)
                 return x.astype("float32"), y.astype("float32")
             except Exception as err:
-                import traceback; traceback.print_stack()
-                print(f"Error generating sample for {idx} (det: {self.deterministic}, torch seed: {torch_seed}): {err}")
+                import traceback
+
+                traceback.print_stack()
+                print(
+                    f"Error generating sample for {idx} (det: {self.deterministic}, torch seed: {torch_seed}): {err}"
+                )
 
 
 # -----
 # From https://github.com/rclement/yodel/blob/master/yodel/filter.py
 import math
+
 
 class Biquad:
     """
@@ -152,7 +160,7 @@ class Biquad:
         :param resonance: resonance or Q-factor
         """
         self._compute_constants(samplerate, cutoff, resonance)
-        self._a_coeffs0 = (1.0 + self._alpha)
+        self._a_coeffs0 = 1.0 + self._alpha
         self._a_coeffs1 = (-2.0 * self._cos_w0) / self._a_coeffs0
         self._a_coeffs2 = (1.0 - self._alpha) / self._a_coeffs0
         self._b_coeffs0 = ((1.0 - self._cos_w0) / 2.0) / self._a_coeffs0
@@ -167,7 +175,7 @@ class Biquad:
         :param resonance: resonance or Q-factor
         """
         self._compute_constants(samplerate, cutoff, resonance)
-        self._a_coeffs0 = (1.0 + self._alpha)
+        self._a_coeffs0 = 1.0 + self._alpha
         self._a_coeffs1 = (-2.0 * self._cos_w0) / self._a_coeffs0
         self._a_coeffs2 = (1.0 - self._alpha) / self._a_coeffs0
         self._b_coeffs0 = ((1.0 + self._cos_w0) / 2.0) / self._a_coeffs0
@@ -182,12 +190,12 @@ class Biquad:
         :param resonance: resonance or Q-factor
         """
         self._compute_constants(samplerate, center, resonance)
-        self._a_coeffs0 = (1.0 + self._alpha)
+        self._a_coeffs0 = 1.0 + self._alpha
         self._a_coeffs1 = (-2.0 * self._cos_w0) / self._a_coeffs0
         self._a_coeffs2 = (1.0 - self._alpha) / self._a_coeffs0
         self._b_coeffs0 = (self._alpha) / self._a_coeffs0
         self._b_coeffs1 = 0
-        self._b_coeffs2 = (- self._alpha) / self._a_coeffs0
+        self._b_coeffs2 = (-self._alpha) / self._a_coeffs0
 
     def all_pass(self, samplerate, center, resonance):
         """
@@ -197,7 +205,7 @@ class Biquad:
         :param resonance: resonance or Q-factor
         """
         self._compute_constants(samplerate, center, resonance)
-        self._a_coeffs0 = (1.0 + self._alpha)
+        self._a_coeffs0 = 1.0 + self._alpha
         self._a_coeffs1 = (-2.0 * self._cos_w0) / self._a_coeffs0
         self._a_coeffs2 = (1.0 - self._alpha) / self._a_coeffs0
         self._b_coeffs0 = (1.0 - self._alpha) / self._a_coeffs0
@@ -212,7 +220,7 @@ class Biquad:
         :param resonance: resonance or Q-factor
         """
         self._compute_constants(samplerate, center, resonance)
-        self._a_coeffs0 = (1.0 + self._alpha)
+        self._a_coeffs0 = 1.0 + self._alpha
         self._a_coeffs1 = (-2.0 * self._cos_w0) / self._a_coeffs0
         self._a_coeffs2 = (1.0 - self._alpha) / self._a_coeffs0
         self._b_coeffs0 = (1.0) / self._a_coeffs0
@@ -228,7 +236,7 @@ class Biquad:
         :param dbgain: gain in dB
         """
         self._compute_constants(samplerate, center, resonance, dbgain)
-        self._a_coeffs0 = (1.0 + self._alpha / self._a)
+        self._a_coeffs0 = 1.0 + self._alpha / self._a
         self._a_coeffs1 = (-2.0 * self._cos_w0) / self._a_coeffs0
         self._a_coeffs2 = (1.0 - self._alpha / self._a) / self._a_coeffs0
         self._b_coeffs0 = (1.0 + self._alpha * self._a) / self._a_coeffs0
@@ -244,27 +252,20 @@ class Biquad:
         :param dbgain: gain in dB
         """
         self._compute_constants(samplerate, cutoff, resonance, dbgain)
-        self._a_coeffs0 = ((self._a + 1) +
-                             (self._a - 1) * self._cos_w0 + self._sqrtAlpha)
-        self._a_coeffs1 = ((-2.0 * ((self._a - 1) +
-                                      (self._a + 1) * self._cos_w0)) /
-                             self._a_coeffs0)
-        self._a_coeffs2 = (((self._a + 1) +
-                              (self._a - 1) * self._cos_w0 - self._sqrtAlpha) /
-                             self._a_coeffs0)
-        self._b_coeffs0 = ((self._a *
-                              ((self._a + 1) -
-                               (self._a - 1) * self._cos_w0 +
-                               self._sqrtAlpha)) /
-                             self._a_coeffs0)
-        self._b_coeffs1 = ((2.0 * self._a *
-                              ((self._a - 1) - (self._a + 1) * self._cos_w0)) /
-                             self._a_coeffs0)
-        self._b_coeffs2 = ((self._a *
-                              ((self._a + 1) -
-                               (self._a - 1) * self._cos_w0 -
-                               self._sqrtAlpha)) /
-                             self._a_coeffs0)
+        self._a_coeffs0 = (self._a + 1) + (self._a - 1) * self._cos_w0 + self._sqrtAlpha
+        self._a_coeffs1 = (-2.0 * ((self._a - 1) + (self._a + 1) * self._cos_w0)) / self._a_coeffs0
+        self._a_coeffs2 = (
+            (self._a + 1) + (self._a - 1) * self._cos_w0 - self._sqrtAlpha
+        ) / self._a_coeffs0
+        self._b_coeffs0 = (
+            self._a * ((self._a + 1) - (self._a - 1) * self._cos_w0 + self._sqrtAlpha)
+        ) / self._a_coeffs0
+        self._b_coeffs1 = (
+            2.0 * self._a * ((self._a - 1) - (self._a + 1) * self._cos_w0)
+        ) / self._a_coeffs0
+        self._b_coeffs2 = (
+            self._a * ((self._a + 1) - (self._a - 1) * self._cos_w0 - self._sqrtAlpha)
+        ) / self._a_coeffs0
 
     def high_shelf(self, samplerate, cutoff, resonance, dbgain):
         """
@@ -275,28 +276,20 @@ class Biquad:
         :param dbgain: gain in dB
         """
         self._compute_constants(samplerate, cutoff, resonance, dbgain)
-        self._a_coeffs0 = ((self._a + 1) -
-                             (self._a - 1) * self._cos_w0 + self._sqrtAlpha)
-        self._a_coeffs1 = ((2.0 *
-                              ((self._a - 1) - (self._a + 1) * self._cos_w0)) /
-                             self._a_coeffs0)
-        self._a_coeffs2 = (((self._a + 1) -
-                              (self._a - 1) * self._cos_w0 -
-                              self._sqrtAlpha) /
-                             self._a_coeffs0)
-        self._b_coeffs0 = ((self._a *
-                              ((self._a + 1) +
-                               (self._a - 1) * self._cos_w0 +
-                               self._sqrtAlpha)) /
-                             self._a_coeffs0)
-        self._b_coeffs1 = ((-2.0 * self._a *
-                              ((self._a - 1) + (self._a + 1) * self._cos_w0)) /
-                             self._a_coeffs0)
-        self._b_coeffs2 = ((self._a *
-                              ((self._a + 1) +
-                               (self._a - 1) * self._cos_w0 -
-                               self._sqrtAlpha)) /
-                             self._a_coeffs0)
+        self._a_coeffs0 = (self._a + 1) - (self._a - 1) * self._cos_w0 + self._sqrtAlpha
+        self._a_coeffs1 = (2.0 * ((self._a - 1) - (self._a + 1) * self._cos_w0)) / self._a_coeffs0
+        self._a_coeffs2 = (
+            (self._a + 1) - (self._a - 1) * self._cos_w0 - self._sqrtAlpha
+        ) / self._a_coeffs0
+        self._b_coeffs0 = (
+            self._a * ((self._a + 1) + (self._a - 1) * self._cos_w0 + self._sqrtAlpha)
+        ) / self._a_coeffs0
+        self._b_coeffs1 = (
+            -2.0 * self._a * ((self._a - 1) + (self._a + 1) * self._cos_w0)
+        ) / self._a_coeffs0
+        self._b_coeffs2 = (
+            self._a * ((self._a + 1) + (self._a - 1) * self._cos_w0 - self._sqrtAlpha)
+        ) / self._a_coeffs0
 
     def custom(self, a0, a1, a2, b0, b1, b2):
         """
@@ -322,11 +315,13 @@ class Biquad:
         :rtype: filtered sample
         """
         curr = x
-        y = (self._b_coeffs0 * x +
-             self._b_coeffs1 * self._x1 +
-             self._b_coeffs2 * self._x2 -
-             self._a_coeffs1 * self._y1 -
-             self._a_coeffs2 * self._y2)
+        y = (
+            self._b_coeffs0 * x
+            + self._b_coeffs1 * self._x1
+            + self._b_coeffs2 * self._x2
+            - self._a_coeffs1 * self._y1
+            - self._a_coeffs2 * self._y2
+        )
         self._x2 = self._x1
         self._x1 = curr
         self._y2 = self._y1
@@ -361,8 +356,11 @@ class Biquad:
 
 import numba
 
-NumbaBiquad = numba.experimental.jitclass([
-    (f, numba.float64) for f in [f"_{x}_coeffs{i}" for x in "ab" for i in range(3)] + """
+NumbaBiquad = numba.experimental.jitclass(
+    [
+        (f, numba.float64)
+        for f in [f"_{x}_coeffs{i}" for x in "ab" for i in range(3)]
+        + """
 _fc
 _q
 _dbgain
@@ -377,7 +375,8 @@ _x1
 _x2
 _y1
 _y2""".strip().splitlines()
-])(Biquad)
+    ]
+)(Biquad)
 # -----
 
 
@@ -421,32 +420,42 @@ def rand_lowpass(rand, sr, min_cutoff, max_cutoff, min_q, max_q, data):
 
 def rand_pitch_shift(rand, sr, min_speedup, max_speedup, data, fast_ok=False):
     return librosa.resample(
-        data, sr, int(rand.uniform(min_speedup, max_speedup) * sr),
-        res_type="kaiser_fast" if fast_ok else "kaiser_best"
+        data,
+        sr,
+        int(rand.uniform(min_speedup, max_speedup) * sr),
+        res_type="kaiser_fast" if fast_ok else "kaiser_best",
     )
 
 
 def rand_eq_pitch(rand, data, always_eq, enable_biquad, enable_lowpass, fast_ok=False, log=False):
-    if always_eq or np_proba(rand, 1/2):
-        if enable_biquad and np_proba(rand, 1/3):
-            if log: print("biqad")
-            data = rand_biquad(rand, 16000,0,8000,0.5,1.5,data)
+    if always_eq or np_proba(rand, 1 / 2):
+        if enable_biquad and np_proba(rand, 1 / 3):
+            if log:
+                print("biqad")
+            data = rand_biquad(rand, 16000, 0, 8000, 0.5, 1.5, data)
         else:
-            if log: print("shelv")
+            if log:
+                print("shelv")
             t = np_choice(rand, ("low_shelf", "high_shelf"))
             data = rand_shelv(
-                rand, 16000,
+                rand,
+                16000,
                 0,
                 4000 if t == "low_shelf" else 8000,  # never attenuate high frequencies
-                0.5, 1.5,
+                0.5,
+                1.5,
                 -15 if t == "low_shelf" else 0,  # never attenuate high frequencies
-                15, t, data)
-    if np_proba(rand, 1/2):
-        if log: print("pitch")
+                15,
+                t,
+                data,
+            )
+    if np_proba(rand, 1 / 2):
+        if log:
+            print("pitch")
         data = rand_pitch_shift(rand, 16000, 0.95, 1.05, data, fast_ok=fast_ok)
     # Never attenuate high frequencies.
     # This is also partly covered by piping through codecs.
-    #if np_proba(rand, 3/100):
+    # if np_proba(rand, 3/100):
     #    if log: print("lowpass")
     #    with ti("lowpass"):
     #        data = rand_lowpass(rand, 16000, 4000, 7000, 0.5, 1.5, data)
@@ -456,8 +465,7 @@ def rand_eq_pitch(rand, data, always_eq, enable_biquad, enable_lowpass, fast_ok=
 def rand_clipping(rand, min_percentile, max_percentile, *data):
     p = rand.uniform(min_percentile, max_percentile)
     for d in data:
-        percentile = np.percentile(
-            np.abs(d), int(100 * p))
+        percentile = np.percentile(np.abs(d), int(100 * p))
         d = d.copy()
         d[np.where(d > percentile)] = percentile
         d[np.where(d < -percentile)] = -percentile
@@ -465,18 +473,20 @@ def rand_clipping(rand, min_percentile, max_percentile, *data):
 
 
 def loadrandir(rand, sr, augment, n, log=False):
-    if np_proba(rand, 1/10):
+    if np_proba(rand, 1 / 10):
         ir_f = np_choice(rand, dns_irs_files)
     else:
         ir_f = np_choice(rand, real_rirs_files)
-    if log: print(ir_f)
+    if log:
+        print(ir_f)
     ir, sr_ = librosa.load(ir_f, sr=None, duration=3, dtype="float64")
     assert sr_ == sr, (ir_f, sr_, sr)
     ir = fast_trim_zeros(ir)
 
     if augment:
-        if np_proba(rand, 1/2):
-            if log: print("Speedup IR")
+        if np_proba(rand, 1 / 2):
+            if log:
+                print("Speedup IR")
             ir = librosa.resample(ir, sr, int(rand.uniform(0.8, 1.2) * sr))
 
     i = safe_peaknorm(ir)
@@ -486,16 +496,19 @@ def loadrandir(rand, sr, augment, n, log=False):
     ir = ir[skip:]
 
     if augment:
-        #if log: print("IR len", len(ir)/sr)
-        if np_proba(rand, 1/3):
-            if log: print("Decay IR")
+        # if log: print("IR len", len(ir)/sr)
+        if np_proba(rand, 1 / 3):
+            if log:
+                print("Decay IR")
+            # TODO: fix me: decay should be much earlier
             decay_start = int(rand.normal(1, 0.2) * sr)
             decay_len = int(rand.uniform(0.005, 0.1) * sr)
             if len(ir) >= decay_start + decay_len:
-                if log: print("Decay IR from/len", decay_start/sr, decay_len/sr)
+                if log:
+                    print("Decay IR from/len", decay_start / sr, decay_len / sr)
                 decay_slope = rand.integers(3, 10)
                 decay = np.exp(-np.linspace(0, decay_slope, decay_len))
-                ir = ir[:decay_start+decay_len]
+                ir = ir[: decay_start + decay_len]
                 ir[decay_start:] *= decay
         irs = rand_boost_ir(rand, n=n, ir=ir)
     else:
@@ -504,7 +517,7 @@ def loadrandir(rand, sr, augment, n, log=False):
 
 
 def convolve_direct(sr, data, ir):
-    direct_path = ir[:int(0.0075 * sr)]
+    direct_path = ir[: int(0.0075 * sr)]
     return scipy.signal.convolve(data, direct_path, "valid")
 
 
@@ -534,33 +547,43 @@ def rand_codec(rand, sr, *data, log=False):
         ("libopus", "ogg", [8, 16, 32, 64]),
         ("libvorbis", "ogg", [45, 64, 80, 96]),
         ("libmp3lame", "mp3", [32, 40, 48, 56, 64, 80, 96]),
-#         ("ac3", "ac3", 37, 128),
-#         ("wmav2", "wma", 24, 128),
+        #         ("ac3", "ac3", 37, 128),
+        #         ("wmav2", "wma", 24, 128),
     ]
     encoder, container, bitrates = np_choice(rand, CODECS)
     bitrate = np_choice(rand, bitrates)
     ffmpeg_cmd = (
-            "/usr/bin/ffmpeg "
-            # Waveform input
-            f"-f f32le -ar {sr} -ac 1 -i - "
-            # Codec
-            f"-c:a {encoder} -b:a {bitrate}k -f {container} - "
-            # Decoding + waveform outut
-            "| /usr/bin/ffmpeg -ac 1 -i - -c:a pcm_f32le -f f32le -"
-        )
-    if log: print("Run", ffmpeg_cmd)
+        "/usr/bin/ffmpeg "
+        # Waveform input
+        f"-f f32le -ar {sr} -ac 1 -i - "
+        # Codec
+        f"-c:a {encoder} -b:a {bitrate}k -f {container} - "
+        # Decoding + waveform outut
+        "| /usr/bin/ffmpeg -ac 1 -i - -c:a pcm_f32le -f f32le -"
+    )
+    if log:
+        print("Run", ffmpeg_cmd)
     for idx, d in enumerate(data):
         assert "float64" in str(d.dtype)
         try:
-            proc = subprocess.run(["sh", "-c", ffmpeg_cmd], input=d.astype("float32").tobytes(), capture_output=True,check=True)
+            proc = subprocess.run(
+                ["sh", "-c", ffmpeg_cmd],
+                input=d.astype("float32").tobytes(),
+                capture_output=True,
+                check=True,
+            )
         except subprocess.CalledProcessError as err:
-            raise RuntimeError(f"Error in ffmpeg on item {idx}:" + err.stderr.decode("ascii", "ignore")) from err
+            raise RuntimeError(
+                f"Error in ffmpeg on item {idx}:" + err.stderr.decode("ascii", "ignore")
+            ) from err
         out = np.frombuffer(proc.stdout, "float32").astype("float64")
         if encoder == "libopus":
             # Opus will always output 48 kHz
             out = librosa.resample(out, 48_000, sr, res_type="kaiser_fast")
-        _, out = align_audio(sr, int(0.2 * sr), 0, d, out)  # comparing less than entire signal is unstable
-        assert np.abs(1 - d.nbytes/out.nbytes) < 0.2, ffmpeg_cmd
+        _, out = align_audio(
+            sr, int(0.2 * sr), 0, d, out
+        )  # comparing less than entire signal is unstable
+        assert np.abs(1 - d.nbytes / out.nbytes) < 0.2, ffmpeg_cmd
         yield librosa.util.fix_length(out, len(d))
 
 
@@ -578,35 +601,38 @@ def align_audio(sr, maxoff_samples, lookahead_samples, target, pred):
 def align_dist(sr, maxoff_samples, lookahead_samples, target, pred):
     if lookahead_samples <= 0:
         lookahead_samples = max(len(target), len(pred))
-    return fastalign.fastalign(pred.astype("float32"), target.astype("float32"), maxoff_samples, lookahead_samples)
+    return fastalign.fastalign(
+        pred.astype("float32"), target.astype("float32"), maxoff_samples, lookahead_samples
+    )
 
 
 def np_proba(rand, p):
     return rand.uniform() < p
 
+
 def np_choice(rand, collection):
     return collection[rand.integers(len(collection))]
 
 
-def trim_zeros_block(filt, trim='fb', block_size=1024):
+def trim_zeros_block(filt, trim="fb", block_size=1024):
     """Trim blocks of zeros"""
     trim = trim.upper()
     first = 0
-    if 'F' in trim:
+    if "F" in trim:
         for i in range(0, len(filt), block_size):
-            if np.any(filt[i:i+block_size] != 0.):
+            if np.any(filt[i : i + block_size] != 0.0):
                 first = i
                 break
     last = len(filt)
-    if 'B' in trim:
-        for i in range(len(filt)-1, block_size - 1, -block_size):
-            if np.any(filt[i-block_size:i] != 0.):
+    if "B" in trim:
+        for i in range(len(filt) - 1, block_size - 1, -block_size):
+            if np.any(filt[i - block_size : i] != 0.0):
                 last = i
                 break
     return filt[first:last]
 
 
-def fast_trim_zeros(filt, trim='fb'):
+def fast_trim_zeros(filt, trim="fb"):
     filt = trim_zeros_block(filt, trim)
     return np.trim_zeros(filt, trim)
 
@@ -652,26 +678,31 @@ def randmix(rand, speech_f, log=False, perf=True):
         noise = np.zeros_like(speech)
     else:
         noise_f = np_choice(rand, dns_noise_files)
-        if log: print(noise_f)
+        if log:
+            print(noise_f)
         noise, sr = librosa.load(noise_f, sr=None, dtype="float64")
         assert sr == 16000, (noise_f, "sr", sr)
         noise = safe_peaknorm(noise)
 
-        if np_proba(rand, 4/5):  # performance optim
-            noise = rand_eq_pitch(rand, noise, always_eq=False, enable_biquad=False, enable_lowpass=True, log=log)
+        if np_proba(rand, 4 / 5):  # performance optim
+            noise = rand_eq_pitch(
+                rand, noise, always_eq=False, enable_biquad=False, enable_lowpass=True, log=log
+            )
 
-    if np_proba(rand, 4/5):
-        if np_proba(rand, 3/5):
-            if log: print("IR on speech and noise")
+    if np_proba(rand, 4 / 5):
+        if np_proba(rand, 3 / 5):
+            if log:
+                print("IR on speech and noise")
             speech_ir, noise_ir = loadrandir(rand, 16000, augment=True, n=2, log=log)
             speech_x = scipy.signal.convolve(speech, speech_ir, "valid")
-            speech_y = convolve_direct(16000, speech, speech_ir)[-len(speech_x):]
+            speech_y = convolve_direct(16000, speech, speech_ir)[-len(speech_x) :]
             noise_x = scipy.signal.convolve(noise, noise_ir, "valid")
         else:
-            if log: print("IR on speech only")
-            speech_ir, = loadrandir(rand, 16000, augment=True, n=1, log=log)
+            if log:
+                print("IR on speech only")
+            (speech_ir,) = loadrandir(rand, 16000, augment=True, n=1, log=log)
             speech_x = scipy.signal.convolve(speech, speech_ir, "valid")
-            speech_y = convolve_direct(16000, speech, speech_ir)[-len(speech_x):]
+            speech_y = convolve_direct(16000, speech, speech_ir)[-len(speech_x) :]
             noise_x = noise
     else:
         if log:
@@ -757,10 +788,12 @@ def randmix(rand, speech_f, log=False, perf=True):
 
 def bench1():
     rand = np.random.default_rng()
-    *_, = randmix(rand, np_choice(rand, dns_clean_files))
+    (*_,) = randmix(rand, np_choice(rand, dns_clean_files))
+
 
 def bench():
     import cProfile
+
     for _ in range(3):
         bench1()
     pr = cProfile.Profile()
@@ -769,4 +802,5 @@ def bench():
         bench1()
     pr.create_stats()
     import pstats
+
     pstats.Stats(pr).strip_dirs().sort_stats("cumtime").print_stats(10)

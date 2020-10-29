@@ -6,7 +6,12 @@ import torch
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, random_split
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor, GPUStatsMonitor
+from pytorch_lightning.callbacks import (
+    ModelCheckpoint,
+    EarlyStopping,
+    LearningRateMonitor,
+    GPUStatsMonitor,
+)
 
 from asteroid import DCCRNet
 from asteroid.engine import schedulers
@@ -16,7 +21,8 @@ from asteroid.engine.system import System
 from asteroid.losses import singlesrc_neg_sisdr
 
 from ranger2020 import Ranger
-#from warmup_scheduler import GradualWarmupScheduler
+
+# from warmup_scheduler import GradualWarmupScheduler
 
 # Keys which are not in the conf.yml file can be added here.
 # In the hierarchical dictionary created when parsing, the key `key` can be
@@ -68,10 +74,12 @@ if 0:
             conf["data"]["dns_noise_dir"],
             conf["data"]["dns_clean_dir"],
         )
-        #ds.bench(); return
+        # ds.bench(); return
         train_ds, val_ds = ds.make_ds()
-        #train_ds.getitem(166507, 4415633321459280479, log=True); return
+        # train_ds.getitem(166507, 4415633321459280479, log=True); return
         return train_ds, val_ds
+
+
 else:
     import numpy as np
 
@@ -81,13 +89,16 @@ else:
 
         def __getitem__(self, idx):
             rand = np.random.default_rng(idx)
-            return rand.uniform(size=(3*16000,)).astype("float32"), rand.uniform(size=(3*16000,)).astype("float32")
+            return (
+                rand.uniform(size=(3 * 16000,)).astype("float32"),
+                rand.uniform(size=(3 * 16000,)).astype("float32"),
+            )
 
-    def loss_func (est_target, target):
+    def loss_func(est_target, target):
         return (est_target[0].squeeze(1) - target).abs().mean()
 
     def getds(conf):
-           return MyDs(), MyDs()
+        return MyDs(), MyDs()
 
 
 def main(conf):
@@ -98,10 +109,10 @@ def main(conf):
         batch_size=conf["training"]["batch_size"],
         num_workers=conf["training"]["num_workers"],
         drop_last=True,
-        pin_memory=True
+        pin_memory=True,
     )
 
-    #import tqdm; for _ in tqdm.tqdm(train_loader): pass
+    # import tqdm; for _ in tqdm.tqdm(train_loader): pass
 
     val_loader = DataLoader(
         val_ds,
@@ -109,13 +120,13 @@ def main(conf):
         batch_size=conf["training"]["batch_size"],
         num_workers=conf["training"]["num_workers"],
         drop_last=True,
-        pin_memory=True
+        pin_memory=True,
     )
 
     model = DCCRNet(architecture="DCCRN-CL")
-    #model = DCUNet(architecture="DCUNet-16")
+    # model = DCUNet(architecture="DCUNet-16")
     optimizer = Ranger(model.parameters(), **conf["optim"])
-    #optimizer = make_optimizer(model.parameters(), optimizer="adam", **conf["optim"])
+    # optimizer = make_optimizer(model.parameters(), optimizer="adam", **conf["optim"])
 
     # Define scheduler
     scheduler = None
@@ -133,7 +144,7 @@ def main(conf):
                 optimizer=optimizer,
                 multiplier=1,
                 total_epoch=10,
-                after_scheduler=scheduler["scheduler"] if scheduler else None
+                after_scheduler=scheduler["scheduler"] if scheduler else None,
             ),
             "monitor": "val_loss",
             "interval": "epoch",
@@ -148,8 +159,8 @@ def main(conf):
         yaml.safe_dump(conf, outfile)
 
     # Define Loss function.
-    #loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
-    #loss_func = lambda est_target, target: singlesrc_neg_sisdr(est_target.squeeze(1), target).mean()
+    # loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
+    # loss_func = lambda est_target, target: singlesrc_neg_sisdr(est_target.squeeze(1), target).mean()
     system = System(
         model=model,
         loss_func=loss_func,
@@ -170,14 +181,14 @@ def main(conf):
         early_stopping = EarlyStopping(monitor="val_loss", patience=15, verbose=True)
     callbacks = [
         LearningRateMonitor(),
-        #GPUStatsMonitor(),
+        # GPUStatsMonitor(),
     ]
 
     # Don't ask GPU if they are not available.
     gpus = -1 if torch.cuda.is_available() else None
-    #assert torch.cuda.is_available()
+    # assert torch.cuda.is_available()
     trainer = pl.Trainer(
-            #weights_summary='full',
+        # weights_summary='full',
         callbacks=callbacks,
         max_epochs=conf["training"]["epochs"],
         checkpoint_callback=checkpoint,
@@ -185,12 +196,12 @@ def main(conf):
         default_root_dir=exp_dir,
         gpus=gpus,
         benchmark=True,
-        #distributed_backend="ddp",
-        #val_check_interval=0.34,
-        #limit_train_batches=10,
-        #limit_val_batches=10,
+        # distributed_backend="ddp",
+        # val_check_interval=0.34,
+        # limit_train_batches=10,
+        # limit_val_batches=10,
         gradient_clip_val=conf["training"]["gradient_clipping"],
-        #resume_from_checkpoint="/root/asteroid/egs/dns_challenge/dccrn/exp/tmp/checkpoints.ckpt",
+        # resume_from_checkpoint="/root/asteroid/egs/dns_challenge/dccrn/exp/tmp/checkpoints.ckpt",
     )
     trainer.fit(system)
 
@@ -203,7 +214,7 @@ def main(conf):
     system.cpu()
 
     to_save = system.model.serialize()
-    #to_save.update(train_set.get_infos())
+    # to_save.update(train_set.get_infos())
     torch.save(to_save, os.path.join(exp_dir, "best_model.pth"))
 
 
