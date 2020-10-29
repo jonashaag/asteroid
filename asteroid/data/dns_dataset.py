@@ -43,20 +43,32 @@ class DNSDataset(data.Dataset):
         # Load mixture
         x_np, sr = sf.read(utt_info["mix"], dtype="float32")
         assert sr == self.sample_rate
-        start, stop = get_wav_random_start_stop(len(x_np), int(self.segment * self.sample_rate) if self.segment is not None else None)
+        start, stop = get_wav_random_start_stop(
+            len(x_np), int(self.segment * self.sample_rate) if self.segment is not None else None
+        )
         x = torch.from_numpy(x_np[start:stop])
         # Load clean
-        speech = torch.from_numpy(sf.read(utt_info["clean"], dtype="float32", start=start, stop=stop)[0])
-        #x = x/x.max() * 0.99
-        #speech = speech/speech.max() * 0.99
+        speech = torch.from_numpy(
+            sf.read(utt_info["clean"], dtype="float32", start=start, stop=stop)[0]
+        )
+        # x = x/x.max() * 0.99
+        # speech = speech/speech.max() * 0.99
         if self.segment is not None:
-            x = torch.nn.functional.pad(x, (0, max(0, int(self.segment * self.sample_rate) - len(x))))
-            speech = torch.nn.functional.pad(speech, (0, max(0, int(self.segment * self.sample_rate) - len(speech))))
+            x = torch.nn.functional.pad(
+                x, (0, max(0, int(self.segment * self.sample_rate) - len(x)))
+            )
+            speech = torch.nn.functional.pad(
+                speech, (0, max(0, int(self.segment * self.sample_rate) - len(speech)))
+            )
         if self.load_noise:
             # Load noise
-            noise = torch.from_numpy(sf.read(utt_info["noise"], dtype="float32", start=start, stop=stop)[0])
+            noise = torch.from_numpy(
+                sf.read(utt_info["noise"], dtype="float32", start=start, stop=stop)[0]
+            )
             if self.segment is not None:
-                noise = torch.nn.functional.pad(noise, (0, max(0, int(self.segment * self.sample_rate) - len(noise))))
+                noise = torch.nn.functional.pad(
+                    noise, (0, max(0, int(self.segment * self.sample_rate) - len(noise)))
+                )
             return x, speech, noise
         else:
             return x, speech
@@ -73,7 +85,7 @@ class DNSDataset(data.Dataset):
             "segment": self.segment,
             "task": "enhancement",
             "licenses": [dns_license],
-            "n_src": 2 if self.load_noise else 1
+            "n_src": 2 if self.load_noise else 1,
         }
 
 

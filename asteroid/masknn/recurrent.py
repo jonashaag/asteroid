@@ -602,3 +602,12 @@ class DCCRMaskNet(BaseDCUMaskNet):  # CHECK-JIT
             raise TypeError(
                 f"Input shape must be [batch, freq, time] with freq divisible by {freq_prod}, got {x.shape} instead"
             )
+
+
+#    def forward_enc(self, enc_idx, x):
+#        # Pad time dimension to the left
+#        return self.encoders[enc_idx](torch.nn.functional.pad(x, (1, 0)))
+#
+#    def forward_dec(self, dec_idx, x):
+#        # Strip padding from encoder
+#        return self.decoders[dec_idx](x)[..., 1:]
