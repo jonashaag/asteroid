@@ -30,7 +30,8 @@ parser.add_argument("--exp_dir", default="exp/tmp", help="Full path to save best
 
 if 0:
     from asteroid.filterbanks import make_enc_dec
-    from ds import itu_r_468_weighted_torch
+    from ds import itu_r_468_matrix
+
     asteroid_stft, _ = make_enc_dec(
         "stft",
         kernel_size=512,
@@ -39,21 +40,27 @@ if 0:
     )
     asteroid_stft = asteroid_stft.cuda()
 
+    itu_matrix = torch.from_numpy(itu_r_468_matrix(512, 16000))[None, None, :, None]
+
     def loss_func(est_target, target_wav):
         from asteroid.filterbanks.transforms import take_mag
+
         est_wav, est_stft = est_target
         target_wav = target_wav.unsqueeze(1)
         assert len(est_wav.shape) == 3, est_wav.shape
         assert len(target_wav.shape) == 3, target_wav.shape
         assert len(est_stft.shape) == 4, est_stft.shape
         target_stft = asteroid_stft(target_wav)
-        magmse = ((take_mag(est_stft) - take_mag(target_stft))).abs().mean(dim=-1)
-        magmse = itu_r_468_weighted_torch(magmse, 512, 16000).mean()
-        wavmse = ((est_wav - target_wav)).abs().mean()
-        return 1.5 * magmse + 1 * wavmse
+        est_mag = take_mag(est_stft)
+        target_mag = take_mag(target_stft)
+        over_under_weights = 1 + 4 * (est_mag.abs() < target_mag.abs())
+        magmae = (((est_mag - target_mag).abs() * over_under_weights) * itu_r_468_matrix).mean()
+        wavmae = ((est_wav - target_wav)).abs().mean()
+        return 1.5 * magmae + 1 * wavmae
 
     def getds(conf):
         import ds
+
         ds.configure(
             conf["data"]["segment"],
             conf["data"]["real_rirs_dir"],

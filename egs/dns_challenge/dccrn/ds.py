@@ -381,20 +381,13 @@ _y2""".strip().splitlines()
 # -----
 
 
-def itu_r_468_weighted(spec, n_fft, sr):
-    assert spec.ndim == 2
-    assert spec.shape[0] == n_fft // 2 + 1
-    return spec * np.array([
-        itu_r_468_weighting.filter.r468(f, "1khz", "factor")
-        for f in librosa.fft_frequencies(sr, n_fft)])[:, None]
-
-
-def itu_r_468_weighted_torch(spec, n_fft, sr):
-    assert spec.ndim == 3
-    assert spec.shape[-1] == n_fft // 2 + 1
-    return spec * torch.tensor([
-        itu_r_468_weighting.filter.r468(f, "1khz", "factor")
-        for f in librosa.fft_frequencies(sr, n_fft)], device=spec.device)[None, None]
+def itu_r_468_matrix(n_fft, sr):
+    return np.array(
+        [
+            itu_r_468_weighting.filter.r468(f, "1khz", "factor")
+            for f in librosa.fft_frequencies(sr, n_fft)
+        ]
+    )
 
 
 def rand_shelv(rand, sr, min_cutoff, max_cutoff, min_q, max_q, min_g, max_g, t, data):
@@ -413,7 +406,7 @@ def rand_biquad(rand, sr, min_cf, max_cf, min_q, max_q, data):
     filt.band_pass(sr, rand.uniform(min_cf, max_cf), rand.uniform(min_q, max_q))
     out = np.zeros_like(data)
     filt.process(data, out)
-    return rand.uniform(1, 5) * (out + 1e-10) + data
+    return rand.uniform(1, 5) * (out + 1e-20) + data
 
 
 def rand_lowpass(rand, sr, min_cutoff, max_cutoff, min_q, max_q, data):
@@ -622,27 +615,40 @@ def safe_peaknorm(a):
     if np.all(a == 0):
         return a
     else:
-        return a / (np.abs(a).max() + 1e-10)
+        return a / (np.abs(a).max() + 1e-20)
 
 
-#np.seterr("raise")
+def normalize_rms(x, db):
+    if np.all(x == 0):
+        return x
+    else:
+        (r,) = librosa.db_to_power(np.array([db]))
+        gain = np.sqrt((len(x) * r ** 2) / (np.sum(x ** 2) + 1e-20))
+        return gain * x
 
 
-def randmix(rand, speech_f, log=False):
-    if log: print(speech_f)
+# np.seterr("raise")
 
-    if np_proba(rand, 3/100):
-        if log: print("no speech")
+
+def randmix(rand, speech_f, log=False, perf=True):
+    if log:
+        perf = False
+    if log:
+        print(speech_f)
+
+    if np_proba(rand, 3 / 100):
+        if log:
+            print("no speech")
         speech = np.zeros((len_samples,))
         speech_f = None
     else:
         speech, sr = librosa.load(speech_f, sr=None, dtype="float64")
         assert sr == 16000, (speech_f, "sr", sr)
         speech = fast_trim_zeros(speech)
-        speech = safe_peaknorm(speech)
 
-    if len(fast_trim_zeros(speech)) and np_proba(rand, 1/5):
-        if log: print("no noise")
+    if len(fast_trim_zeros(speech)) and np_proba(rand, 1 / 5):
+        if log:
+            print("no noise")
         noise = np.zeros_like(speech)
     else:
         noise_f = np_choice(rand, dns_noise_files)
@@ -668,43 +674,85 @@ def randmix(rand, speech_f, log=False):
             speech_y = convolve_direct(16000, speech, speech_ir)[-len(speech_x):]
             noise_x = noise
     else:
-        if log: print("EQ on speech")
-        speech_y = speech_x = rand_eq_pitch(rand, speech, always_eq=True, enable_biquad=True, enable_lowpass=True, fast_ok=True, log=log)
+        if log:
+            print("EQ on speech")
+        speech_y = speech_x = rand_eq_pitch(
+            rand,
+            speech,
+            always_eq=True,
+            enable_biquad=True,
+            enable_lowpass=True,
+            fast_ok=True,
+            log=log,
+        )
         noise_x = noise
 
-    speech_x, speech_y = crop_or_pad(rand, len_samples, speech_x, speech_y)
-    noise_x, = crop_or_pad(rand, len_samples, noise_x)
+    if np_proba(rand, 1 / 10):
+        # Random initial silence
+        initial_silence = int(rand.uniform(0, 1) * 16000)
+        len_samples_this = len_samples - initial_silence
+    else:
+        len_samples_this = len_samples
 
-    if np_proba(rand, 1/20):
-        if log: print("clipping")
-        speech_x, noise_x, = rand_clipping(rand, 0.99, 1, speech_x, noise_x)
+    speech_x, speech_y = crop_or_pad(rand, len_samples_this, speech_x, speech_y)
+    (noise_x,) = crop_or_pad(rand, len_samples_this, noise_x)
 
+    # TODO: normalize noise as well?
+    speech_x = normalize_rms(speech_x, -20)
+    speech_y = normalize_rms(speech_y, -20)
+
+    if np_proba(rand, 1 / 20):
+        if log:
+            print("clipping")
+        speech_x, noise_x, speech_y = rand_clipping(rand, 0.99, 1, speech_x, noise_x, speech_y)
 
     assert "float64" in str(speech_x.dtype)
     assert "float64" in str(noise_x.dtype)
     speech_x_magspec = np.abs(librosa.stft(speech_x + 1e-20, 512))
     noise_x_magspec = np.abs(librosa.stft(noise_x + 1e-20, 512))
-    sw = itu_r_468_weighted(speech_x_magspec, 512, 16000)
-    nw = itu_r_468_weighted(noise_x_magspec, 512, 16000)
-    r = (
-        librosa.db_to_amplitude(
-            librosa.amplitude_to_db(sw).min() - librosa.amplitude_to_db(nw).min())
-        * rand.uniform(0.01, 0.05))
+    sw = itu_r_468_matrix(512, 16000)[:, None] * speech_x_magspec
+    nw = itu_r_468_matrix(512, 16000)[:, None] * noise_x_magspec
+    # TODO: Use rms here instead?
+    r = librosa.db_to_amplitude(
+        librosa.amplitude_to_db(sw).min() - librosa.amplitude_to_db(nw).min()
+    ) * rand.uniform(0.01, 0.05)
 
-    if log: print("r", r, noise_x.min())
-    noise_xr = (r + 1e-10) * (noise_x + 1e-10)
+    if log:
+        print("r", r, noise_x.min())
+    noise_xr = (r + 1e-20) * (noise_x + 1e-20)
     mix = speech_x + noise_xr
 
     # Codec is by far the slowest, can increase to 1/5 if CPU fast enough
-    if speech_f is not None and speech_f.endswith(".wav") and np_proba(rand, 1/7):
-        mix, speech_x, noise_x, speech_y = rand_codec(rand, 16000, mix, speech_x, noise_x, speech_y, log=log)
+    if speech_f is not None and speech_f.endswith(".wav") and np_proba(rand, 1 / 7):
+        if perf:
+            mix, speech_y = rand_codec(rand, 16000, mix, speech_y, log=log)
+        else:
+            mix, speech_x, noise_x, speech_y = rand_codec(
+                rand, 16000, mix, speech_x, noise_x, speech_y, log=log
+            )
 
-    mix, speech_x, noise_x, speech_y = crop_or_pad(rand, len_samples, mix, speech_x, noise_x, speech_y)
+    mix, speech_x, noise_x, speech_y = crop_or_pad(
+        rand, len_samples_this, mix, speech_x, noise_x, speech_y
+    )
+    mix, speech_x, noise_x, speech_y = [
+        np.pad(x, (initial_silence, 0)) for x in [mix, speech_x, noise_x, speech_y]
+    ]
+
+    mix = normalize_rms(mix, -20)
+    g = rand.uniform(*librosa.db_to_amplitude(np.array([-25, 5])))
+    mix *= g
+    speech *= g
+    speech_x *= g
+    noise_x *= g
+    speech_y *= g
 
     librosa.util.valid_audio(mix)
     librosa.util.valid_audio(speech_y)
+    if not perf:
+        librosa.util.valid_audio(speech_x)
+        librosa.util.valid_audio(noise_x)
 
-    return map(safe_peaknorm, [mix, speech, speech_x, noise_x, speech_y])
+    return mix, speech, speech_x, noise_x, speech_y
 
 
 def bench1():

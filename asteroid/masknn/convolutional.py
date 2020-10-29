@@ -418,7 +418,8 @@ class DCUNetComplexEncoderBlock(nn.Module):  # CHECK-JIT
     ):
         super().__init__()
 
-        self.conv = complex_nn.ComplexConv2d(in_chan, out_chan, kernel_size, stride, padding)
+        self.conv = complex_nn.ComplexConv2d(in_chan, out_chan, kernel_size, stride, padding,
+                                             bias=norm_type is None)
 
         self.norm = norms.get_complex(norm_type)(out_chan)
 
@@ -470,6 +471,8 @@ class DCUNetComplexDecoderBlock(nn.Module):  # CHECK-JIT
 
         self.deconv = complex_nn.ComplexConvTranspose2d(
             in_chan, out_chan, kernel_size, stride, padding, output_padding
+            , bias=norm_type is None
+
         )
 
         self.norm = norms.get_complex(norm_type)(out_chan)
