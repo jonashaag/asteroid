@@ -382,12 +382,16 @@ _y2""".strip().splitlines()
 
 
 def itu_r_468_weighted(spec, n_fft, sr):
+    assert spec.ndim == 2
+    assert spec.shape[0] == n_fft // 2 + 1
     return spec * np.array([
         itu_r_468_weighting.filter.r468(f, "1khz", "factor")
         for f in librosa.fft_frequencies(sr, n_fft)])[:, None]
 
 
 def itu_r_468_weighted_torch(spec, n_fft, sr):
+    assert spec.ndim == 3
+    assert spec.shape[-1] == n_fft // 2 + 1
     return spec * torch.tensor([
         itu_r_468_weighting.filter.r468(f, "1khz", "factor")
         for f in librosa.fft_frequencies(sr, n_fft)], device=spec.device)[None, None]
