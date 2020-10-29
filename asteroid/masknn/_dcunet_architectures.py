@@ -1,9 +1,7 @@
 from ..utils.generic_utils import unet_decoder_args
 
 
-def make_unet_encoder_decoder_args(
-    encoder_args, decoder_args
-):
+def make_unet_encoder_decoder_args(encoder_args, decoder_args):
     encoder_args = [
         (
             in_chan,
