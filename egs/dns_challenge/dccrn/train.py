@@ -25,6 +25,8 @@ from asteroid.losses import singlesrc_neg_sisdr
 
 from ranger2020 import Ranger
 
+torch.manual_seed(42)
+
 # from warmup_scheduler import GradualWarmupScheduler
 
 # Keys which are not in the conf.yml file can be added here.
@@ -37,40 +39,36 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--exp_dir", default="exp/tmp", help="Full path to save best validation model")
 
 
-if 0:
+if 1:
     from asteroid.filterbanks import make_enc_dec
     from asteroid.filterbanks.transforms import take_mag
     from ds import itu_r_468_matrix
+    from torch.nn.modules.loss import _Loss
 
-    asteroid_stft, _ = make_enc_dec(
-        "stft",
-        kernel_size=512,
-        n_filters=512,
-        sample_rate=16000.0,
-    )
-    asteroid_stft_dev = {}
+    class MyLoss(_Loss):
+        def __init__(self):
+            super().__init__()
+            self.asteroid_stft, _ = make_enc_dec(
+                "stft",
+                kernel_size=512,
+                n_filters=512,
+                sample_rate=16000.0,
+            )
+            self.itu_matrix = torch.from_numpy(itu_r_468_matrix(512, 16000))[None, None, :, None]
 
-    itu_matrix = torch.from_numpy(itu_r_468_matrix(512, 16000))[None, None, :, None]
-    itu_matrix_dev = {}
+        def forward(self, est_wav, target_wav):
+            target_wav = target_wav.unsqueeze(1)
+            assert len(est_wav.shape) == 3, est_wav.shape
+            assert len(target_wav.shape) == 3, target_wav.shape
 
-    def loss_func(est_target, target_wav):
-        est_wav, est_stft = est_target
-        target_wav = target_wav.unsqueeze(1)
-        assert len(est_wav.shape) == 3, est_wav.shape
-        assert len(target_wav.shape) == 3, target_wav.shape
-        assert len(est_stft.shape) == 4, est_stft.shape
-
-        if est_wav.device not in itu_matrix_dev:
-            asteroid_stft_dev[est_wav.device] = asteroid_stft.to(est_wav.device)
-            itu_matrix_dev[est_wav.device] = itu_matrix.to(est_wav.device)
-
-        target_stft = asteroid_stft_dev[est_wav.device](target_wav)
-        est_mag = take_mag(est_stft)
-        target_mag = take_mag(target_stft)
-        over_under_weights = 1 + 4 * (est_mag.abs() < target_mag.abs())
-        magmae = (((est_mag - target_mag).abs() * over_under_weights) * itu_matrix_dev[est_wav.device]).mean()
-        wavmae = ((est_wav - target_wav)).abs().mean()
-        return 1.5 * magmae + 1 * wavmae
+            target_stft = self.asteroid_stft.to(est_wav.device)(target_wav)
+            est_stft = self.asteroid_stft.to(est_wav.device)(est_wav)
+            est_mag = take_mag(est_stft)
+            target_mag = take_mag(target_stft)
+            over_under_weights = 1 + 4 * (est_mag.abs() < target_mag.abs())
+            magmae = (((est_mag - target_mag).abs() * over_under_weights) * self.itu_matrix.to(est_wav.device)).mean()
+            wavmae = ((est_wav - target_wav)).abs().mean()
+            return 1000 * (1 * wavmae + 2 * magmae)
 
     def getds(conf):
         import ds
@@ -141,6 +139,7 @@ def main(conf):
         for batch in tqdm.tqdm(val_loader):
             pass
 
+    #train_ds = NpyDs(VAL_FOLDER)
     val_ds = NpyDs(VAL_FOLDER)
 
     train_loader = DataLoader(
@@ -170,7 +169,7 @@ def main(conf):
 
     # Define scheduler
     scheduler = None
-    if conf["training"]["half_lr"]:
+    if 1 and conf["training"]["half_lr"]:
         scheduler = {
             "scheduler": ReduceLROnPlateau(optimizer=optimizer, factor=0.5, patience=5),
             "monitor": "val_loss",
@@ -201,6 +200,7 @@ def main(conf):
     # Define Loss function.
     # loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
     # loss_func = lambda est_target, target: singlesrc_neg_sisdr(est_target.squeeze(1), target).mean()
+    loss_func = MyLoss()
     system = System(
         model=model,
         loss_func=loss_func,
@@ -215,6 +215,7 @@ def main(conf):
     checkpoint_dir = os.path.join(exp_dir, "checkpoints/")
     checkpoint = ModelCheckpoint(
         checkpoint_dir, monitor="val_loss", mode="min", save_top_k=5, save_last=True, verbose=True
+        #checkpoint_dir, save_top_k=None, verbose=True
     )
     early_stopping = False
     if conf["training"]["early_stop"]:
@@ -237,13 +238,15 @@ def main(conf):
         gpus=gpus,
         benchmark=True,
         distributed_backend="ddp",
+        #reload_dataloaders_every_epoch=True,
         # val_check_interval=0.34,
-        # limit_train_batches=10,
-        # limit_val_batches=10,
+        #limit_train_batches=0.3,
+        #limit_val_batches=0,#.3,
         gradient_clip_val=conf["training"]["gradient_clipping"],
         # resume_from_checkpoint="/root/asteroid/egs/dns_challenge/dccrn/exp/tmp/checkpoints.ckpt",
     )
-    trainer.fit(system)
+    with torch.autograd.set_detect_anomaly(not (not 0)):
+        trainer.fit(system)
 
     best_k = {k: v.item() for k, v in checkpoint.best_k_models.items()}
     with open(os.path.join(exp_dir, "best_k_models.json"), "w") as f:

@@ -1,3 +1,4 @@
+import time
 import os
 import torch
 import itertools
@@ -80,9 +81,30 @@ def make_ds():
     return MyDs(train_clean, deterministic=False), MyDs(val_clean, deterministic=False)
 
 
+def _setup_timer():
+    import threading, sys, traceback, time
+    def t():
+        while 1:
+            time.sleep(30)
+            for th in threading.enumerate():
+                print("--- Thread stack ---", th)
+                traceback.print_stack(sys._current_frames()[th.ident], -3)
+                print()
+    thread = threading.Thread(target=t)
+    thread.daemon = True
+    thread.start()
+    return thread
+
+
+
+timer = None
+
+
 class MyDs(torch.utils.data.Dataset):
     def __init__(self, clean_files, deterministic):
         self.clean_files = clean_files
+        if 1:
+            self.clean_files = self.clean_files[:int(len(self.clean_files) * 0.1)]
         self.deterministic = deterministic
         self.save_to_dir = None
 
@@ -90,6 +112,9 @@ class MyDs(torch.utils.data.Dataset):
         return len(self.clean_files)
 
     def __getitem__(self, idx):
+        #global timer
+        #if timer is None:
+        #    timer = _setup_timer()
         res = self.getitem(idx)
         if self.save_to_dir:
             fname = f"{idx:10d}.npy"
@@ -97,24 +122,40 @@ class MyDs(torch.utils.data.Dataset):
         return res
 
     def getitem(self, idx, torch_seed=None, log=False):
+        dbg = False
+        if dbg:
+            #my_id = torch.utils.data.get_worker_info().id
+            my_id = -1
+            #import threading
+            #print("Worker", my_id, "thread", threading.get_ident())
+            logfile = open(f"/tmp/worker-{my_id}.log", "a")
+        if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} start\n"); logfile.flush()
         if torch_seed is None:
             if self.deterministic:
                 torch_seed = idx
             else:
                 torch_seed = torch.seed()
+        if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} set seed\n"); logfile.flush()
         rand = np.random.default_rng(torch_seed)
-        while True:
+        for i in range(10):
+            if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} try {i}\n"); logfile.flush()
             try:
                 clean_f = np_choice(rand, self.clean_files)
+                if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} generate {clean_f}\n"); logfile.flush()
                 x, _, _, _, y = randmix(rand, clean_f, log=log)
+                if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} success\n"); logfile.flush()
                 return x.astype("float32"), y.astype("float32")
+            except KeyboardInterrupt:
+                raise
             except Exception as err:
+                if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} err {err}\n"); logfile.flush()
                 import traceback
 
                 traceback.print_stack()
                 print(
                     f"Error generating sample for {idx} (det: {self.deterministic}, torch seed: {torch_seed}): {err}"
                 )
+        raise RuntimeError(f"Stopping worker after {i+1} failures in a row")
 
 
 # -----
