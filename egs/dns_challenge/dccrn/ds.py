@@ -1,3 +1,4 @@
+import os
 import torch
 import itertools
 import glob
@@ -83,12 +84,17 @@ class MyDs(torch.utils.data.Dataset):
     def __init__(self, clean_files, deterministic):
         self.clean_files = clean_files
         self.deterministic = deterministic
+        self.save_to_dir = None
 
     def __len__(self):
         return len(self.clean_files)
 
     def __getitem__(self, idx):
-        return self.getitem(idx)
+        res = self.getitem(idx)
+        if self.save_to_dir:
+            fname = f"{idx:10d}.npy"
+            np.save(os.path.join(self.save_to_dir, fname), np.vstack(res), allow_pickle=False)
+        return res
 
     def getitem(self, idx, torch_seed=None, log=False):
         if torch_seed is None:
@@ -721,9 +727,9 @@ def randmix(rand, speech_f, log=False, perf=True):
     if np_proba(rand, 1 / 10):
         # Random initial silence
         initial_silence = int(rand.uniform(0, 1) * 16000)
-        len_samples_this = len_samples - initial_silence
     else:
-        len_samples_this = len_samples
+        initial_silence = 0
+    len_samples_this = len_samples - initial_silence
 
     speech_x, speech_y = crop_or_pad(rand, len_samples_this, speech_x, speech_y)
     (noise_x,) = crop_or_pad(rand, len_samples_this, noise_x)
@@ -754,7 +760,7 @@ def randmix(rand, speech_f, log=False, perf=True):
     mix = speech_x + noise_xr
 
     # Codec is by far the slowest, can increase to 1/5 if CPU fast enough
-    if speech_f is not None and speech_f.endswith(".wav") and np_proba(rand, 1 / 7):
+    if speech_f is not None and speech_f.endswith(".wav") and np_proba(rand, 1 / 10):
         if perf:
             mix, speech_y = rand_codec(rand, 16000, mix, speech_y, log=log)
         else:

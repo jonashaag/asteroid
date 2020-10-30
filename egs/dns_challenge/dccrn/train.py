@@ -3,6 +3,9 @@ import argparse
 import json
 
 import torch
+import tqdm
+import numpy as np
+import glob
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader, random_split
 import pytorch_lightning as pl
@@ -36,6 +39,7 @@ parser.add_argument("--exp_dir", default="exp/tmp", help="Full path to save best
 
 if 0:
     from asteroid.filterbanks import make_enc_dec
+    from asteroid.filterbanks.transforms import take_mag
     from ds import itu_r_468_matrix
 
     asteroid_stft, _ = make_enc_dec(
@@ -44,23 +48,27 @@ if 0:
         n_filters=512,
         sample_rate=16000.0,
     )
-    asteroid_stft = asteroid_stft.cuda()
+    asteroid_stft_dev = {}
 
     itu_matrix = torch.from_numpy(itu_r_468_matrix(512, 16000))[None, None, :, None]
+    itu_matrix_dev = {}
 
     def loss_func(est_target, target_wav):
-        from asteroid.filterbanks.transforms import take_mag
-
         est_wav, est_stft = est_target
         target_wav = target_wav.unsqueeze(1)
         assert len(est_wav.shape) == 3, est_wav.shape
         assert len(target_wav.shape) == 3, target_wav.shape
         assert len(est_stft.shape) == 4, est_stft.shape
-        target_stft = asteroid_stft(target_wav)
+
+        if est_wav.device not in itu_matrix_dev:
+            asteroid_stft_dev[est_wav.device] = asteroid_stft.to(est_wav.device)
+            itu_matrix_dev[est_wav.device] = itu_matrix.to(est_wav.device)
+
+        target_stft = asteroid_stft_dev[est_wav.device](target_wav)
         est_mag = take_mag(est_stft)
         target_mag = take_mag(target_stft)
         over_under_weights = 1 + 4 * (est_mag.abs() < target_mag.abs())
-        magmae = (((est_mag - target_mag).abs() * over_under_weights) * itu_r_468_matrix).mean()
+        magmae = (((est_mag - target_mag).abs() * over_under_weights) * itu_matrix_dev[est_wav.device]).mean()
         wavmae = ((est_wav - target_wav)).abs().mean()
         return 1.5 * magmae + 1 * wavmae
 
@@ -101,8 +109,40 @@ else:
         return MyDs(), MyDs()
 
 
+VAL_FOLDER = "/root/val-cache"
+
+
+class NpyDs(torch.utils.data.Dataset):
+    def __init__(self, root):
+        self.root = root
+        self.files = glob.glob(self.root + "/**/*.npy", recursive=True)
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, idx):
+        return tuple(np.load(self.files[idx]))
+
+
 def main(conf):
-    val_ds, train_ds = getds(conf)
+    train_ds, val_ds = getds(conf)
+
+    if not os.path.exists(VAL_FOLDER):
+        os.makedirs(VAL_FOLDER)
+        val_ds.save_to_dir = VAL_FOLDER
+        val_loader = DataLoader(
+            val_ds,
+            shuffle=False,
+            batch_size=conf["training"]["batch_size"],
+            num_workers=conf["training"]["num_workers"],
+            drop_last=True,
+            pin_memory=True,
+        )
+        for batch in tqdm.tqdm(val_loader):
+            pass
+
+    val_ds = NpyDs(VAL_FOLDER)
+
     train_loader = DataLoader(
         train_ds,
         shuffle=True,
@@ -112,7 +152,7 @@ def main(conf):
         pin_memory=True,
     )
 
-    # import tqdm; for _ in tqdm.tqdm(train_loader): pass
+    # for _ in tqdm.tqdm(train_loader): pass
 
     val_loader = DataLoader(
         val_ds,
@@ -196,7 +236,7 @@ def main(conf):
         default_root_dir=exp_dir,
         gpus=gpus,
         benchmark=True,
-        # distributed_backend="ddp",
+        distributed_backend="ddp",
         # val_check_interval=0.34,
         # limit_train_batches=10,
         # limit_val_batches=10,
