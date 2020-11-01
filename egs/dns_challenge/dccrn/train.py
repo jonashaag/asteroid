@@ -39,6 +39,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--exp_dir", default="exp/tmp", help="Full path to save best validation model")
 
 
+def sisdr(e, t):
+    return singlesrc_neg_sisdr(e.squeeze(1), t.squeeze(1)).mean()
+
+
 if 1:
     from asteroid.filterbanks import make_enc_dec
     from asteroid.filterbanks.transforms import take_mag
@@ -70,7 +74,7 @@ if 1:
             wavmae = ((est_wav - target_wav)).abs().mean()
             return 1000 * (1 * wavmae + 2 * magmae)
 
-    def getds(conf):
+    def getds(conf, **kwargs):
         import ds
 
         ds.configure(
@@ -81,7 +85,7 @@ if 1:
             conf["data"]["dns_clean_dir"],
         )
         # ds.bench(); return
-        train_ds, val_ds = ds.make_ds()
+        train_ds, val_ds = ds.make_ds(**kwargs)
         # train_ds.getitem(166507, 4415633321459280479, log=True); return
         return train_ds, val_ds
 
@@ -103,11 +107,8 @@ else:
     def loss_func(est_target, target):
         return (est_target[0].squeeze(1) - target).abs().mean()
 
-    def getds(conf):
+    def getds(conf, **kwargs):
         return MyDs(), MyDs()
-
-
-VAL_FOLDER = "/root/val-cache"
 
 
 class NpyDs(torch.utils.data.Dataset):
@@ -123,8 +124,10 @@ class NpyDs(torch.utils.data.Dataset):
 
 
 def main(conf):
-    train_ds, val_ds = getds(conf)
+    exp_dir = conf["main_args"]["exp_dir"]
+    train_ds, val_ds = getds(conf, target="denoise" if "denoise" in exp_dir else "dereverb")
 
+    VAL_FOLDER = os.path.join(exp_dir, "val-cache")
     if not os.path.exists(VAL_FOLDER):
         os.makedirs(VAL_FOLDER)
         val_ds.save_to_dir = VAL_FOLDER
@@ -164,8 +167,8 @@ def main(conf):
 
     model = DCCRNet(architecture="DCCRN-CL")
     # model = DCUNet(architecture="DCUNet-16")
-    optimizer = Ranger(model.parameters(), **conf["optim"])
-    # optimizer = make_optimizer(model.parameters(), optimizer="adam", **conf["optim"])
+    #optimizer = Ranger(model.parameters(), **conf["optim"])
+    optimizer = make_optimizer(model.parameters(), optimizer="adam", **conf["optim"])
 
     # Define scheduler
     scheduler = None
@@ -191,7 +194,6 @@ def main(conf):
         }
 
     # Just after instantiating, save the args. Easy loading in the future.
-    exp_dir = conf["main_args"]["exp_dir"]
     os.makedirs(exp_dir, exist_ok=True)
     conf_path = os.path.join(exp_dir, "conf.yml")
     with open(conf_path, "w") as outfile:
@@ -200,7 +202,8 @@ def main(conf):
     # Define Loss function.
     # loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
     # loss_func = lambda est_target, target: singlesrc_neg_sisdr(est_target.squeeze(1), target).mean()
-    loss_func = MyLoss()
+    #loss_func = MyLoss()
+    loss_func = sisdr
     system = System(
         model=model,
         loss_func=loss_func,
@@ -228,6 +231,12 @@ def main(conf):
     # Don't ask GPU if they are not available.
     gpus = -1 if torch.cuda.is_available() else None
     # assert torch.cuda.is_available()
+    ckpt = f"{exp_dir}/last.ckpt"
+    if os.path.exists(ckpt):
+        print("NOTE: Resuming from last.ckpt")
+    else:
+        print("NOTE: Starting from scratch (no checkpoint)")
+        ckpt = None
     trainer = pl.Trainer(
         # weights_summary='full',
         callbacks=callbacks,
@@ -237,13 +246,13 @@ def main(conf):
         default_root_dir=exp_dir,
         gpus=gpus,
         benchmark=True,
-        distributed_backend="ddp",
+        #distributed_backend="ddp",
         #reload_dataloaders_every_epoch=True,
-        # val_check_interval=0.34,
-        #limit_train_batches=0.3,
+        val_check_interval=0.3,
+        #limit_train_batches=0.01,
         #limit_val_batches=0,#.3,
         gradient_clip_val=conf["training"]["gradient_clipping"],
-        # resume_from_checkpoint="/root/asteroid/egs/dns_challenge/dccrn/exp/tmp/checkpoints.ckpt",
+        resume_from_checkpoint=ckpt,
     )
     with torch.autograd.set_detect_anomaly(not (not 0)):
         trainer.fit(system)

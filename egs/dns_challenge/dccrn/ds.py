@@ -10,6 +10,7 @@ import scipy
 import tqdm.contrib.concurrent
 import itu_r_468_weighting.filter
 import fastalign
+from asteroid.utils import get_wav_random_start_stop
 
 
 def configure(len_s, real_irs_path, dns_irs_path, dns_noise_path, dns_clean_path):
@@ -72,13 +73,13 @@ def grouper(f):
     return str((hash(f) % 313) % 10)
 
 
-def make_ds():
+def make_ds(**kwargs):
     (train_spks, train_clean), (val_spks, val_clean) = make_split(
-        dns_clean_files, grouper, [0.95, 0.05]
+        dns_clean_files, grouper, [0.90, 0.1]
     )
     print(f"Train: # spks: {len(train_spks)}, # elems: {len(train_clean)}")
     print(f"Val: # spks: {len(val_spks)}, # elems: {len(val_clean)}")
-    return MyDs(train_clean, deterministic=False), MyDs(val_clean, deterministic=False)
+    return MyDs(train_clean, deterministic=False, **kwargs), MyDs(val_clean, deterministic=False, **kwargs)
 
 
 def _setup_timer():
@@ -100,12 +101,17 @@ def _setup_timer():
 timer = None
 
 
+class TooShort(Exception):
+    pass
+
+
 class MyDs(torch.utils.data.Dataset):
-    def __init__(self, clean_files, deterministic):
+    def __init__(self, clean_files, deterministic, target):
         self.clean_files = clean_files
-        if 1:
+        if 0:
             self.clean_files = self.clean_files[:int(len(self.clean_files) * 0.1)]
         self.deterministic = deterministic
+        self.target = target
         self.save_to_dir = None
 
     def __len__(self):
@@ -142,11 +148,13 @@ class MyDs(torch.utils.data.Dataset):
             try:
                 clean_f = np_choice(rand, self.clean_files)
                 if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} generate {clean_f}\n"); logfile.flush()
-                x, _, _, _, y = randmix(rand, clean_f, log=log)
+                x, _, _, _, y = randmix(rand, self.target, clean_f, log=log)
                 if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} success\n"); logfile.flush()
                 return x.astype("float32"), y.astype("float32")
             except KeyboardInterrupt:
                 raise
+            except TooShort:
+                pass
             except Exception as err:
                 if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} err {err}\n"); logfile.flush()
                 import traceback
@@ -520,13 +528,15 @@ def rand_clipping(rand, min_percentile, max_percentile, *data):
 
 
 def loadrandir(rand, sr, augment, n, log=False):
-    if np_proba(rand, 1 / 10):
+    if np_proba(rand, 1 / 5):
         ir_f = np_choice(rand, dns_irs_files)
+        is_dns = True
     else:
         ir_f = np_choice(rand, real_rirs_files)
+        is_dns = False
     if log:
         print(ir_f)
-    ir, sr_ = librosa.load(ir_f, sr=None, duration=3, dtype="float64")
+    ir, sr_ = librosa.load(ir_f, sr=None, dtype="float64")
     assert sr_ == sr, (ir_f, sr_, sr)
     ir = fast_trim_zeros(ir)
 
@@ -540,11 +550,11 @@ def loadrandir(rand, sr, augment, n, log=False):
     ir = np.pad(ir, (int(0.0025 * sr), 0))
     skip = int(np.abs(ir).argmax() - 0.0025 * sr)
     assert skip >= 0, ("skip", skip)
-    ir = ir[skip:]
+    ir = ir[skip:][:int(1.5 * sr)]
 
     if augment:
         # if log: print("IR len", len(ir)/sr)
-        if np_proba(rand, 1 / 3):
+        if is_dns and np_proba(rand, 1 / 3):
             if log:
                 print("Decay IR")
             # TODO: fix me: decay should be much earlier
@@ -557,10 +567,10 @@ def loadrandir(rand, sr, augment, n, log=False):
                 decay = np.exp(-np.linspace(0, decay_slope, decay_len))
                 ir = ir[: decay_start + decay_len]
                 ir[decay_start:] *= decay
-        irs = rand_boost_ir(rand, n=n, ir=ir)
-    else:
-        irs = [ir for _ in range(n)]
-    return irs
+        if np_proba(rand, 1/2):
+            return [ir.copy(), *rand_unboost_ir(rand, n=n, ir=ir)]
+        # fallthrough
+    return [ir.copy() for _ in range(n + 1)]
 
 
 def convolve_direct(sr, data, ir):
@@ -568,11 +578,11 @@ def convolve_direct(sr, data, ir):
     return scipy.signal.convolve(data, direct_path, "valid")
 
 
-def rand_boost_ir(rand, n, ir):
+def rand_unboost_ir(rand, n, ir):
     irs = []
     for i in range(n):
         ir2 = ir.copy()
-        ir2[np.abs(ir2).argmax()] *= rand.uniform(1, 10)
+        ir2[np.abs(ir2).argmax()] *= rand.uniform(0.7, 1)
         irs.append(ir2)
     return irs
 
@@ -703,13 +713,17 @@ def normalize_rms(x, db):
 # np.seterr("raise")
 
 
-def randmix(rand, speech_f, log=False, perf=True):
+min_length = 1.5
+
+
+def randmix(rand, target, speech_f, log=False, perf=True):
+    assert target in {"both", "denoise", "dereverb"}
     if log:
         perf = False
     if log:
         print(speech_f)
 
-    if np_proba(rand, 3 / 100):
+    if target in {"both", "denoise"} and np_proba(rand, 3 / 100):
         if log:
             print("no speech")
         speech = np.zeros((len_samples,))
@@ -719,37 +733,47 @@ def randmix(rand, speech_f, log=False, perf=True):
         assert sr == 16000, (speech_f, "sr", sr)
         speech = fast_trim_zeros(speech)
 
-    if len(fast_trim_zeros(speech)) and np_proba(rand, 1 / 5):
-        if log:
-            print("no noise")
-        noise = np.zeros_like(speech)
-    else:
-        noise_f = np_choice(rand, dns_noise_files)
-        if log:
-            print(noise_f)
-        noise, sr = librosa.load(noise_f, sr=None, dtype="float64")
-        assert sr == 16000, (noise_f, "sr", sr)
-        noise = safe_peaknorm(noise)
+    if target in {"denoise", "both"}:
+        if len(fast_trim_zeros(speech)) and np_proba(rand, 1 / 5):
+            if log:
+                print("no noise")
+            noise = np.zeros_like(speech)
+        else:
+            noise_f = np_choice(rand, dns_noise_files)
+            if log:
+                print(noise_f)
+            noise, sr = librosa.load(noise_f, sr=None, dtype="float64")
+            assert sr == 16000, (noise_f, "sr", sr)
+            noise = safe_peaknorm(noise)
 
-        if np_proba(rand, 4 / 5):  # performance optim
-            noise = rand_eq_pitch(
-                rand, noise, always_eq=False, enable_biquad=False, enable_lowpass=True, log=log
-            )
+            if np_proba(rand, 4 / 5):  # performance optim
+                noise = rand_eq_pitch(
+                    rand, noise, always_eq=False, enable_biquad=False, enable_lowpass=True, log=log
+                )
 
-    if np_proba(rand, 4 / 5):
-        if np_proba(rand, 3 / 5):
+    if target == "dereverb" or np_proba(rand, 4 / 5):
+        if target == "both" and np_proba(rand, 3 / 5):
             if log:
                 print("IR on speech and noise")
-            speech_ir, noise_ir = loadrandir(rand, 16000, augment=True, n=2, log=log)
+            ref_ir, speech_ir, noise_ir = loadrandir(rand, 16000, augment=True, n=2, log=log)
             speech_x = scipy.signal.convolve(speech, speech_ir, "valid")
-            speech_y = convolve_direct(16000, speech, speech_ir)[-len(speech_x) :]
+            speech_y = convolve_direct(16000, speech, ref_ir)[-len(speech_x) :]
             noise_x = scipy.signal.convolve(noise, noise_ir, "valid")
-        else:
+        elif target in {"dereverb", "both"}:
             if log:
                 print("IR on speech only")
-            (speech_ir,) = loadrandir(rand, 16000, augment=True, n=1, log=log)
+            ref_ir, speech_ir = loadrandir(rand, 16000, augment=True, n=1, log=log)
             speech_x = scipy.signal.convolve(speech, speech_ir, "valid")
-            speech_y = convolve_direct(16000, speech, speech_ir)[-len(speech_x) :]
+            speech_y = convolve_direct(16000, speech, ref_ir)[-len(speech_x) :]
+            if target  == "both":
+                noise_x = noise
+            else:
+                noise_x = np.zeros_like(speech_x)
+        else:  # denoise only
+            #start, stop = get_wav_random_start_stop(len(speech), len_samples, random=rand)
+            #speech_x = speech_y = speech[start:stop]
+            speech_x = speech.copy()
+            speech_y = speech.copy()
             noise_x = noise
     else:
         if log:
@@ -763,7 +787,13 @@ def randmix(rand, speech_f, log=False, perf=True):
             fast_ok=True,
             log=log,
         )
-        noise_x = noise
+        if target in {"denoise", "both"}:
+            noise_x = noise
+        else:
+            noise_x = np.zeros_like(speech_x)
+
+    if 0 < len(fast_trim_zeros(speech_x)) <  min_length * sr:
+        raise TooShort(f"{len(fast_trim_zeros(speech_x))/sr:.2f} s")
 
     if np_proba(rand, 1 / 10):
         # Random initial silence
@@ -785,19 +815,22 @@ def randmix(rand, speech_f, log=False, perf=True):
         speech_x, noise_x, speech_y = rand_clipping(rand, 0.99, 1, speech_x, noise_x, speech_y)
 
     assert "float64" in str(speech_x.dtype)
-    assert "float64" in str(noise_x.dtype)
-    speech_x_magspec = np.abs(librosa.stft(speech_x + 1e-20, 512))
-    noise_x_magspec = np.abs(librosa.stft(noise_x + 1e-20, 512))
-    sw = itu_r_468_matrix(512, 16000)[:, None] * speech_x_magspec
-    nw = itu_r_468_matrix(512, 16000)[:, None] * noise_x_magspec
-    # TODO: Use rms here instead?
-    r = librosa.db_to_amplitude(
-        librosa.amplitude_to_db(sw).min() - librosa.amplitude_to_db(nw).min()
-    ) * rand.uniform(0.01, 0.05)
+    if target in {"denoise", "both"}:
+        assert "float64" in str(noise_x.dtype)
+        speech_x_magspec = np.abs(librosa.stft(speech_x + 1e-20, 512))
+        noise_x_magspec = np.abs(librosa.stft(noise_x + 1e-20, 512))
+        sw = itu_r_468_matrix(512, 16000)[:, None] * speech_x_magspec
+        nw = itu_r_468_matrix(512, 16000)[:, None] * noise_x_magspec
+        # TODO: Use rms here instead?
+        r = librosa.db_to_amplitude(
+            librosa.amplitude_to_db(sw).min() - librosa.amplitude_to_db(nw).min()
+        ) * rand.uniform(0.03, 0.1)
+        if log:
+            print("r", r, noise_x.min())
+        noise_xr = (r + 1e-20) * (noise_x + 1e-20)
+    else:
+        noise_xr = np.zeros_like(speech_x)
 
-    if log:
-        print("r", r, noise_x.min())
-    noise_xr = (r + 1e-20) * (noise_x + 1e-20)
     mix = speech_x + noise_xr
 
     # Codec is by far the slowest, can increase to 1/5 if CPU fast enough
@@ -817,7 +850,7 @@ def randmix(rand, speech_f, log=False, perf=True):
     ]
 
     mix = normalize_rms(mix, -20)
-    g = rand.uniform(*librosa.db_to_amplitude(np.array([-25, 5])))
+    g = rand.uniform(*librosa.db_to_amplitude(np.array([-15, 5])))
     mix *= g
     speech *= g
     speech_x *= g

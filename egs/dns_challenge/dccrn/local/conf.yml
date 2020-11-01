@@ -3,8 +3,8 @@ training:
   epochs: 200
   #batch_size: 16
   #batch_size: 25 # 8 GB
-  batch_size: 33 # 24 GB
-  num_workers: 30
+  batch_size: 40 # 24 GB
+  num_workers: 15
   half_lr: yes
   early_stop: yes
   gradient_clipping: 5
