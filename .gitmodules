@@ -1,0 +1,3 @@
+[submodule "egs/dns_challenge/dccrn/numpy-fast-align-mse"]
+	path = egs/dns_challenge/dccrn/numpy-fast-align-mse
+	url = https://github.com/jonashaag/numpy-fast-align-mse
