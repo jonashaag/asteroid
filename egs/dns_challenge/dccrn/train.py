@@ -131,10 +131,11 @@ def main(conf):
     if not os.path.exists(VAL_FOLDER):
         os.makedirs(VAL_FOLDER)
         val_ds.save_to_dir = VAL_FOLDER
+        val_ds.log = "ds" in exp_dir
         val_loader = DataLoader(
             val_ds,
             shuffle=False,
-            batch_size=conf["training"]["batch_size"],
+            batch_size=5,
             num_workers=conf["training"]["num_workers"],
             drop_last=True,
             pin_memory=True,
@@ -202,8 +203,8 @@ def main(conf):
     # Define Loss function.
     # loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
     # loss_func = lambda est_target, target: singlesrc_neg_sisdr(est_target.squeeze(1), target).mean()
-    #loss_func = MyLoss()
-    loss_func = sisdr
+    loss_func = MyLoss()
+    #loss_func = sisdr
     system = System(
         model=model,
         loss_func=loss_func,
@@ -233,9 +234,9 @@ def main(conf):
     # assert torch.cuda.is_available()
     ckpt = f"{exp_dir}/last.ckpt"
     if os.path.exists(ckpt):
-        print("NOTE: Resuming from last.ckpt")
+        print("*** NOTE: Resuming from last.ckpt")
     else:
-        print("NOTE: Starting from scratch (no checkpoint)")
+        print("*** NOTE: Starting from scratch (no checkpoint)")
         ckpt = None
     trainer = pl.Trainer(
         # weights_summary='full',

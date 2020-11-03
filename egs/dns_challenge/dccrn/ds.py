@@ -1,3 +1,5 @@
+import pesq
+import traceback
 import time
 import os
 import torch
@@ -11,6 +13,11 @@ import tqdm.contrib.concurrent
 import itu_r_468_weighting.filter
 import fastalign
 from asteroid.utils import get_wav_random_start_stop
+
+
+PESQ_THRESHOLD = 2.5
+IR_LEN_THRESHOLD = 0.15
+SPEECH_LEN_THRESHOLD = 1.5
 
 
 def configure(len_s, real_irs_path, dns_irs_path, dns_noise_path, dns_clean_path):
@@ -105,6 +112,10 @@ class TooShort(Exception):
     pass
 
 
+class TooEasy(Exception):
+    pass
+
+
 class MyDs(torch.utils.data.Dataset):
     def __init__(self, clean_files, deterministic, target):
         self.clean_files = clean_files
@@ -113,6 +124,7 @@ class MyDs(torch.utils.data.Dataset):
         self.deterministic = deterministic
         self.target = target
         self.save_to_dir = None
+        self.log = False
 
     def __len__(self):
         return len(self.clean_files)
@@ -121,13 +133,14 @@ class MyDs(torch.utils.data.Dataset):
         #global timer
         #if timer is None:
         #    timer = _setup_timer()
-        res = self.getitem(idx)
+        seed, *res = self.getitem(idx)
         if self.save_to_dir:
-            fname = f"{idx:10d}.npy"
+            fname = f"{idx}-{seed}.npy"
             np.save(os.path.join(self.save_to_dir, fname), np.vstack(res), allow_pickle=False)
         return res
 
     def getitem(self, idx, torch_seed=None, log=False):
+        log = self.log or log
         dbg = False
         if dbg:
             #my_id = torch.utils.data.get_worker_info().id
@@ -142,28 +155,31 @@ class MyDs(torch.utils.data.Dataset):
             else:
                 torch_seed = torch.seed()
         if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} set seed\n"); logfile.flush()
-        rand = np.random.default_rng(torch_seed)
-        for i in range(10):
+        err2 = None
+        nerr = 0
+        for i in range(99999999):
+            cur_seed = torch_seed + i * len(self)
             if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} try {i}\n"); logfile.flush()
             try:
-                clean_f = np_choice(rand, self.clean_files)
-                if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} generate {clean_f}\n"); logfile.flush()
-                x, _, _, _, y = randmix(rand, self.target, clean_f, log=log)
+                if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} generate {cur_seed}\n"); logfile.flush()
+                x, _, _, _, y = randmix(cur_seed, self.target, self.clean_files, log=log)
                 if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} success\n"); logfile.flush()
-                return x.astype("float32"), y.astype("float32")
+                return cur_seed, x.astype("float32"), y.astype("float32")
             except KeyboardInterrupt:
                 raise
-            except TooShort:
-                pass
+            except (TooShort, TooEasy):
+                continue
             except Exception as err:
+                err2 = err
+                nerr += 1
                 if dbg: logfile.write(f"{time.time()} {my_id}\t{idx} err {err}\n"); logfile.flush()
-                import traceback
 
-                traceback.print_stack()
+                traceback.print_exc()
                 print(
-                    f"Error generating sample for {idx} (det: {self.deterministic}, torch seed: {torch_seed}): {err}"
+                    f"Error generating sample for {idx} (det: {self.deterministic}, torch seed: {torch_seed}, cur seed: {cur_seed}): {err}"
                 )
-        raise RuntimeError(f"Stopping worker after {i+1} failures in a row")
+                if nerr >= 10:
+                    raise RuntimeError(f"Stopping worker after {nerr} failures in a row, last err: {err2}")
 
 
 # -----
@@ -444,6 +460,10 @@ def itu_r_468_matrix(n_fft, sr):
     )
 
 
+def noop(*x):
+    pass
+
+
 def rand_shelv(rand, sr, min_cutoff, max_cutoff, min_q, max_q, min_g, max_g, t, data):
     f = rand.uniform(min_cutoff, max_cutoff)
     q = rand.uniform(min_q, max_q)
@@ -482,15 +502,13 @@ def rand_pitch_shift(rand, sr, min_speedup, max_speedup, data, fast_ok=False):
     )
 
 
-def rand_eq_pitch(rand, data, always_eq, enable_biquad, enable_lowpass, fast_ok=False, log=False):
+def rand_eq_pitch(rand, data, always_eq, enable_biquad, enable_lowpass, fast_ok=False, log=noop):
     if always_eq or np_proba(rand, 1 / 2):
         if enable_biquad and np_proba(rand, 1 / 3):
-            if log:
-                print("biqad")
+            log("biqad")
             data = rand_biquad(rand, 16000, 0, 8000, 0.5, 1.5, data)
         else:
-            if log:
-                print("shelv")
+            log("shelv")
             t = np_choice(rand, ("low_shelf", "high_shelf"))
             data = rand_shelv(
                 rand,
@@ -505,8 +523,7 @@ def rand_eq_pitch(rand, data, always_eq, enable_biquad, enable_lowpass, fast_ok=
                 data,
             )
     if np_proba(rand, 1 / 2):
-        if log:
-            print("pitch")
+        log("pitch")
         data = rand_pitch_shift(rand, 16000, 0.95, 1.05, data, fast_ok=fast_ok)
     # Never attenuate high frequencies.
     # This is also partly covered by piping through codecs.
@@ -527,23 +544,25 @@ def rand_clipping(rand, min_percentile, max_percentile, *data):
         yield d
 
 
-def loadrandir(rand, sr, augment, n, log=False):
+def loadrandir(rand, sr, augment, n, log=noop):
     if np_proba(rand, 1 / 5):
-        ir_f = np_choice(rand, dns_irs_files)
+        ir_f = None
+        while ir_f is None:
+            ir_idx, ir_f = np_choice(rand, dns_irs_files, getidx=True)
         is_dns = True
     else:
-        ir_f = np_choice(rand, real_rirs_files)
+        ir_f = None
+        while ir_f is None:
+            ir_idx, ir_f = np_choice(rand, real_rirs_files, getidx=True)
         is_dns = False
-    if log:
-        print(ir_f)
+    log(ir_f)
     ir, sr_ = librosa.load(ir_f, sr=None, dtype="float64")
     assert sr_ == sr, (ir_f, sr_, sr)
     ir = fast_trim_zeros(ir)
 
     if augment:
         if np_proba(rand, 1 / 2):
-            if log:
-                print("Speedup IR")
+            log("Speedup IR")
             ir = librosa.resample(ir, sr, int(rand.uniform(0.8, 1.2) * sr))
 
     i = safe_peaknorm(ir)
@@ -551,38 +570,48 @@ def loadrandir(rand, sr, augment, n, log=False):
     skip = int(np.abs(ir).argmax() - 0.0025 * sr)
     assert skip >= 0, ("skip", skip)
     ir = ir[skip:][:int(1.5 * sr)]
+    log(f"IR len {len(ir)/sr:.2f}")
+
+    if len(ir) < IR_LEN_THRESHOLD * sr:
+        log("IR is too easy, generating new one")
+        if is_dns:
+            dns_irs_files[ir_idx] = None
+        else:
+            real_rirs_files[ir_idx] = None
+        return loadrandir(rand, sr, augment, n, log)
 
     if augment:
         # if log: print("IR len", len(ir)/sr)
         if is_dns and np_proba(rand, 1 / 3):
-            if log:
-                print("Decay IR")
+            log("Decay IR")
             # TODO: fix me: decay should be much earlier
             decay_start = int(rand.normal(1, 0.2) * sr)
             decay_len = int(rand.uniform(0.005, 0.1) * sr)
             if len(ir) >= decay_start + decay_len:
-                if log:
-                    print("Decay IR from/len", decay_start / sr, decay_len / sr)
+                log("Decay IR from/len", decay_start / sr, decay_len / sr)
                 decay_slope = rand.integers(3, 10)
                 decay = np.exp(-np.linspace(0, decay_slope, decay_len))
                 ir = ir[: decay_start + decay_len]
                 ir[decay_start:] *= decay
         if np_proba(rand, 1/2):
-            return [ir.copy(), *rand_unboost_ir(rand, n=n, ir=ir)]
+            log("Unboost IR")
+            return [ir.copy(), *rand_unboost_ir(rand, n, ir, log=log)]
         # fallthrough
     return [ir.copy() for _ in range(n + 1)]
 
 
 def convolve_direct(sr, data, ir):
-    direct_path = ir[: int(0.0075 * sr)]
+    direct_path = ir[: int(0.005 * sr)]
     return scipy.signal.convolve(data, direct_path, "valid")
 
 
-def rand_unboost_ir(rand, n, ir):
+def rand_unboost_ir(rand, n, ir, log=noop):
     irs = []
     for i in range(n):
         ir2 = ir.copy()
-        ir2[np.abs(ir2).argmax()] *= rand.uniform(0.7, 1)
+        r = rand.uniform(0.7, 1)
+        log(f"IR {i} scale {r}")
+        ir2[np.abs(ir2).argmax()] *= r
         irs.append(ir2)
     return irs
 
@@ -599,7 +628,7 @@ def crop_or_pad(rand, target_len, *data):
     return data
 
 
-def rand_codec(rand, sr, *data, log=False):
+def rand_codec(rand, sr, *data, log=noop):
     CODECS = [
         ("libopus", "ogg", [8, 16, 32, 64]),
         ("libvorbis", "ogg", [45, 64, 80, 96]),
@@ -618,8 +647,7 @@ def rand_codec(rand, sr, *data, log=False):
         # Decoding + waveform outut
         "| /usr/bin/ffmpeg -ac 1 -i - -c:a pcm_f32le -f f32le -"
     )
-    if log:
-        print("Run", ffmpeg_cmd)
+    log("Run", ffmpeg_cmd)
     for idx, d in enumerate(data):
         assert "float64" in str(d.dtype)
         try:
@@ -667,8 +695,12 @@ def np_proba(rand, p):
     return rand.uniform() < p
 
 
-def np_choice(rand, collection):
-    return collection[rand.integers(len(collection))]
+def np_choice(rand, collection, getidx=False):
+    idx = rand.integers(len(collection))
+    if getidx:
+        return idx, collection[idx]
+    else:
+        return collection[idx]
 
 
 def trim_zeros_block(filt, trim="fb", block_size=1024):
@@ -713,35 +745,39 @@ def normalize_rms(x, db):
 # np.seterr("raise")
 
 
-min_length = 1.5
-
-
-def randmix(rand, target, speech_f, log=False, perf=True):
+def randmix(rand_seed, target, clean_files, log=False, perf=True):
     assert target in {"both", "denoise", "dereverb"}
     if log:
         perf = False
-    if log:
-        print(speech_f)
+
+    rand = np.random.default_rng(rand_seed)
+
+    log = (lambda *x: print(f"! {rand_seed}\t", *x)) if log else (lambda *x: None)
 
     if target in {"both", "denoise"} and np_proba(rand, 3 / 100):
-        if log:
-            print("no speech")
+        log("no speech")
         speech = np.zeros((len_samples,))
         speech_f = None
     else:
-        speech, sr = librosa.load(speech_f, sr=None, dtype="float64")
-        assert sr == 16000, (speech_f, "sr", sr)
-        speech = fast_trim_zeros(speech)
+        speech_f = None
+        while speech_f is None:
+            speech_f_idx, speech_f = np_choice(rand, clean_files, getidx=True)
+            if speech_f is not None:
+                speech, sr = librosa.load(speech_f, sr=None, dtype="float64")
+                assert sr == 16000, (speech_f, "sr", sr)
+                speech = fast_trim_zeros(speech)
+                if len(speech) < sr * SPEECH_LEN_THRESHOLD:
+                    clean_files[speech_f_idx] = None
+                    speech_f = None
+        log(speech_f)
 
     if target in {"denoise", "both"}:
         if len(fast_trim_zeros(speech)) and np_proba(rand, 1 / 5):
-            if log:
-                print("no noise")
+            log("no noise")
             noise = np.zeros_like(speech)
         else:
             noise_f = np_choice(rand, dns_noise_files)
-            if log:
-                print(noise_f)
+            log(noise_f)
             noise, sr = librosa.load(noise_f, sr=None, dtype="float64")
             assert sr == 16000, (noise_f, "sr", sr)
             noise = safe_peaknorm(noise)
@@ -753,15 +789,13 @@ def randmix(rand, target, speech_f, log=False, perf=True):
 
     if target == "dereverb" or np_proba(rand, 4 / 5):
         if target == "both" and np_proba(rand, 3 / 5):
-            if log:
-                print("IR on speech and noise")
+            log("IR on speech and noise")
             ref_ir, speech_ir, noise_ir = loadrandir(rand, 16000, augment=True, n=2, log=log)
             speech_x = scipy.signal.convolve(speech, speech_ir, "valid")
             speech_y = convolve_direct(16000, speech, ref_ir)[-len(speech_x) :]
             noise_x = scipy.signal.convolve(noise, noise_ir, "valid")
         elif target in {"dereverb", "both"}:
-            if log:
-                print("IR on speech only")
+            log("IR on speech only")
             ref_ir, speech_ir = loadrandir(rand, 16000, augment=True, n=1, log=log)
             speech_x = scipy.signal.convolve(speech, speech_ir, "valid")
             speech_y = convolve_direct(16000, speech, ref_ir)[-len(speech_x) :]
@@ -776,8 +810,7 @@ def randmix(rand, target, speech_f, log=False, perf=True):
             speech_y = speech.copy()
             noise_x = noise
     else:
-        if log:
-            print("EQ on speech")
+        log("EQ on speech")
         speech_y = speech_x = rand_eq_pitch(
             rand,
             speech,
@@ -792,7 +825,7 @@ def randmix(rand, target, speech_f, log=False, perf=True):
         else:
             noise_x = np.zeros_like(speech_x)
 
-    if 0 < len(fast_trim_zeros(speech_x)) <  min_length * sr:
+    if 0 < len(fast_trim_zeros(speech_x)) <  SPEECH_LEN_THRESHOLD * sr:
         raise TooShort(f"{len(fast_trim_zeros(speech_x))/sr:.2f} s")
 
     if np_proba(rand, 1 / 10):
@@ -810,8 +843,7 @@ def randmix(rand, target, speech_f, log=False, perf=True):
     speech_y = normalize_rms(speech_y, -20)
 
     if np_proba(rand, 1 / 20):
-        if log:
-            print("clipping")
+        log("clipping")
         speech_x, noise_x, speech_y = rand_clipping(rand, 0.99, 1, speech_x, noise_x, speech_y)
 
     assert "float64" in str(speech_x.dtype)
@@ -825,16 +857,27 @@ def randmix(rand, target, speech_f, log=False, perf=True):
         r = librosa.db_to_amplitude(
             librosa.amplitude_to_db(sw).min() - librosa.amplitude_to_db(nw).min()
         ) * rand.uniform(0.03, 0.1)
-        if log:
-            print("r", r, noise_x.min())
+        log("r", r, noise_x.min())
         noise_xr = (r + 1e-20) * (noise_x + 1e-20)
     else:
         noise_xr = np.zeros_like(speech_x)
 
     mix = speech_x + noise_xr
 
+    # This is stupid. Figure out why some examples are so easy
+    if target == "dereverb":
+        # Performance heuristic: For long IRs, PESQ is likely < 2.5
+        if len(ref_ir) < 1.48 * 16000:
+            try:
+                pesq_v = pesq.pesq(16000, speech_y, mix, "wb")
+            except Exception as err:
+                log(f"Error computing PESQ, ignoring: {err}")
+            else:
+                if pesq_v > PESQ_THRESHOLD and np_proba(rand, 9 / 10):
+                    raise TooEasy
+
     # Codec is by far the slowest, can increase to 1/5 if CPU fast enough
-    if speech_f is not None and speech_f.endswith(".wav") and np_proba(rand, 1 / 10):
+    if speech_f is not None and speech_f.endswith(".wav") and np_proba(rand, 1 / 15):
         if perf:
             mix, speech_y = rand_codec(rand, 16000, mix, speech_y, log=log)
         else:
