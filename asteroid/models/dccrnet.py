@@ -32,12 +32,14 @@ class DCCRNet(BaseDCUNet):  # CHECK-JIT
             **kwargs,
         )
 
-    def postprocess_encoded(self, tf_rep):
+    def forward_encoder(self, wav):
+        tf_rep = self.encoder(wav)
         # Remove Nyquist frequency bin
         return complex_nn.as_torch_complex(tf_rep)[..., :-1, :]
 
-    def postprocess_masked(self, masked_tf_rep):
-        # Padd Nyquist frequency bin
+    def apply_masks(self, tf_rep, est_masks):
+        masked_tf_rep = est_masks * tf_rep.unsqueeze(1)
+        # Pad Nyquist frequency bin
         return from_torchaudio(
             torch.view_as_real(torch.nn.functional.pad(masked_tf_rep, (0, 0, 0, 1)))
         )

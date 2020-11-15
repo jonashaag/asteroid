@@ -43,7 +43,7 @@ def sisdr(e, t):
     return singlesrc_neg_sisdr(e.squeeze(1), t.squeeze(1)).mean()
 
 
-if 1:
+if 0:
     from asteroid.filterbanks import make_enc_dec
     from asteroid.filterbanks.transforms import take_mag
     from ds import itu_r_468_matrix
@@ -90,7 +90,7 @@ if 1:
         return train_ds, val_ds
 
 
-else:
+elif 0:
     import numpy as np
 
     class MyDs(torch.utils.data.Dataset):
@@ -110,6 +110,26 @@ else:
     def getds(conf, **kwargs):
         return MyDs(), MyDs()
 
+else:
+    import soundfile as sf
+
+    class MyDs(torch.utils.data.Dataset):
+        def __init__(self, files):
+            self.files = files
+
+        def __len__(self):
+            return len(self.files)
+
+        def __getitem__(self, idx):
+            return torch.from_numpy(sf.read(self.files[idx][0], dtype="float32")[0]), torch.from_numpy(sf.read(self.files[idx][1], dtype="float32")[0]),
+
+    def getds(conf, target):
+        files = glob.glob(conf["data"]["dns_xy_dir"] + "/**/x_*.wav", recursive=True)
+        files = [(f, f.replace("x_", "y_")) for f in files]
+        ds = MyDs(files)
+        r = 0.8
+        return random_split(ds, [int(len(ds) * r), len(ds) - int(len(ds) * r)], generator=torch.Generator().manual_seed(42))
+
 
 class NpyDs(torch.utils.data.Dataset):
     def __init__(self, root):
@@ -127,24 +147,25 @@ def main(conf):
     exp_dir = conf["main_args"]["exp_dir"]
     train_ds, val_ds = getds(conf, target="denoise" if "denoise" in exp_dir else "dereverb")
 
-    VAL_FOLDER = os.path.join(exp_dir, "val-cache")
-    if not os.path.exists(VAL_FOLDER):
-        os.makedirs(VAL_FOLDER)
-        val_ds.save_to_dir = VAL_FOLDER
-        val_ds.log = "ds" in exp_dir
-        val_loader = DataLoader(
-            val_ds,
-            shuffle=False,
-            batch_size=5,
-            num_workers=conf["training"]["num_workers"],
-            drop_last=True,
-            pin_memory=True,
-        )
-        for batch in tqdm.tqdm(val_loader):
-            pass
+    if 0:
+        VAL_FOLDER = os.path.join(exp_dir, "val-cache")
+        if not os.path.exists(VAL_FOLDER):
+            os.makedirs(VAL_FOLDER)
+            val_ds.save_to_dir = VAL_FOLDER
+            val_ds.log = "ds" in exp_dir
+            val_loader = DataLoader(
+                val_ds,
+                shuffle=False,
+                batch_size=5,
+                num_workers=conf["training"]["num_workers"],
+                drop_last=True,
+                pin_memory=True,
+            )
+            for batch in tqdm.tqdm(val_loader):
+                pass
 
-    #train_ds = NpyDs(VAL_FOLDER)
-    val_ds = NpyDs(VAL_FOLDER)
+        #train_ds = NpyDs(VAL_FOLDER)
+        val_ds = NpyDs(VAL_FOLDER)
 
     train_loader = DataLoader(
         train_ds,
@@ -168,8 +189,8 @@ def main(conf):
 
     model = DCCRNet(architecture="DCCRN-CL")
     # model = DCUNet(architecture="DCUNet-16")
-    #optimizer = Ranger(model.parameters(), **conf["optim"])
-    optimizer = make_optimizer(model.parameters(), optimizer="adam", **conf["optim"])
+    optimizer = Ranger(model.parameters(), **conf["optim"])
+    #optimizer = make_optimizer(model.parameters(), optimizer="adam", **conf["optim"])
 
     # Define scheduler
     scheduler = None
@@ -203,8 +224,8 @@ def main(conf):
     # Define Loss function.
     # loss_func = PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")
     # loss_func = lambda est_target, target: singlesrc_neg_sisdr(est_target.squeeze(1), target).mean()
-    loss_func = MyLoss()
-    #loss_func = sisdr
+    #loss_func = MyLoss()
+    loss_func = sisdr
     system = System(
         model=model,
         loss_func=loss_func,
