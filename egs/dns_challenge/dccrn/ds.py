@@ -18,10 +18,12 @@ from asteroid.utils import get_wav_random_start_stop
 PESQ_THRESHOLD = 2.5
 IR_LEN_THRESHOLD = 0.15
 SPEECH_LEN_THRESHOLD = 1.5
+DIRECT_PRE = 0.0025
+DIRECT_POST = 0.0025
 
 
-def configure(len_s, real_irs_path, dns_irs_path, dns_noise_path, dns_clean_path):
-    global len_samples, real_rirs_files, dns_irs_files, dns_noise_files, dns_clean_files
+def configure(len_s, real_irs_path, dns_irs_path, dns_noise_path):
+    global len_samples, real_rirs_files, dns_irs_files, dns_noise_files
 
     len_samples = int(len_s * 16000)
 
@@ -31,8 +33,6 @@ def configure(len_s, real_irs_path, dns_irs_path, dns_noise_path, dns_clean_path
     assert len(dns_irs_files) > 10000
     dns_noise_files = glob.glob(dns_noise_path + "/**/*.wav", recursive=True)
     assert len(dns_noise_files) > 10000
-    dns_clean_files = glob.glob(dns_clean_path + "/**/*.wav", recursive=True)
-    assert len(dns_clean_files) > 10000
 
 
 def deterministic_shuffle(x):
@@ -544,7 +544,7 @@ def rand_clipping(rand, min_percentile, max_percentile, *data):
         yield d
 
 
-def loadrandir(rand, sr, augment, n, log=noop):
+def loadrandir(rand, sr, augment, n, resample_ok=False, log=noop):
     if np_proba(rand, 1 / 5):
         ir_f = None
         while ir_f is None:
@@ -556,7 +556,7 @@ def loadrandir(rand, sr, augment, n, log=noop):
             ir_idx, ir_f = np_choice(rand, real_rirs_files, getidx=True)
         is_dns = False
     log(ir_f)
-    ir, sr_ = librosa.load(ir_f, sr=None, dtype="float64")
+    ir, sr_ = librosa.load(ir_f, sr=16000 if resample_ok else None, dtype="float64")
     assert sr_ == sr, (ir_f, sr_, sr)
     ir = fast_trim_zeros(ir)
 
@@ -566,8 +566,8 @@ def loadrandir(rand, sr, augment, n, log=noop):
             ir = librosa.resample(ir, sr, int(rand.uniform(0.8, 1.2) * sr))
 
     i = safe_peaknorm(ir)
-    ir = np.pad(ir, (int(0.0025 * sr), 0))
-    skip = int(np.abs(ir).argmax() - 0.0025 * sr)
+    ir = np.pad(ir, (int(DIRECT_PRE * sr), 0))
+    skip = int(np.abs(ir).argmax() - DIRECT_PRE * sr)
     assert skip >= 0, ("skip", skip)
     ir = ir[skip:][:int(1.5 * sr)]
     log(f"IR len {len(ir)/sr:.2f}")
@@ -578,7 +578,7 @@ def loadrandir(rand, sr, augment, n, log=noop):
             dns_irs_files[ir_idx] = None
         else:
             real_rirs_files[ir_idx] = None
-        return loadrandir(rand, sr, augment, n, log)
+        return loadrandir(rand, sr, augment, n, resample_ok, log)
 
     if augment:
         # if log: print("IR len", len(ir)/sr)
@@ -601,7 +601,7 @@ def loadrandir(rand, sr, augment, n, log=noop):
 
 
 def convolve_direct(sr, data, ir):
-    direct_path = ir[: int(0.005 * sr)]
+    direct_path = ir[: int((DIRECT_PRE + DIRECT_POST) * sr)]
     return scipy.signal.convolve(data, direct_path, "valid")
 
 
@@ -666,28 +666,26 @@ def rand_codec(rand, sr, *data, log=noop):
             # Opus will always output 48 kHz
             out = librosa.resample(out, 48_000, sr, res_type="kaiser_fast")
         _, out = align_audio(
-            sr, int(0.2 * sr), 0, d, out
+            sr, int(0.2 * sr), d, out
         )  # comparing less than entire signal is unstable
         assert np.abs(1 - d.nbytes / out.nbytes) < 0.2, ffmpeg_cmd
         yield librosa.util.fix_length(out, len(d))
 
 
-def align_audio(sr, maxoff_samples, lookahead_samples, target, pred):
+def align_audio(sr, maxoff_samples, target, pred):
     """Align pred with target: If pred is delayed, cut some samples. If target is delayed, pad pred."""
     assert "float64" in str(target.dtype)
     assert "float64" in str(pred.dtype)
-    dist = align_dist(sr, maxoff_samples, lookahead_samples, target, pred)
+    dist = align_dist(sr, maxoff_samples, target, pred)
     if dist < 0:
         return dist, np.pad(pred, (-dist, 0))
     else:
         return dist, pred[dist:]
 
 
-def align_dist(sr, maxoff_samples, lookahead_samples, target, pred):
-    if lookahead_samples <= 0:
-        lookahead_samples = max(len(target), len(pred))
-    return fastalign.fastalign(
-        pred.astype("float32"), target.astype("float32"), maxoff_samples, lookahead_samples
+def align_dist(sr, maxoff_samples, target, pred):
+    return fastalign.best_offset(
+        pred.astype("float32"), target.astype("float32"), maxoff_samples,
     )
 
 
@@ -745,7 +743,7 @@ def normalize_rms(x, db):
 # np.seterr("raise")
 
 
-def randmix(rand_seed, target, clean_files, log=False, perf=True):
+def randmix(rand_seed, target, clean_files, log=False, perf=True, resample_ok=False):
     assert target in {"both", "denoise", "dereverb"}
     if log:
         perf = False
@@ -763,7 +761,7 @@ def randmix(rand_seed, target, clean_files, log=False, perf=True):
         while speech_f is None:
             speech_f_idx, speech_f = np_choice(rand, clean_files, getidx=True)
             if speech_f is not None:
-                speech, sr = librosa.load(speech_f, sr=None, dtype="float64")
+                speech, sr = librosa.load(speech_f, sr=16000 if resample_ok else None, res_type="kaiser_fast", dtype="float64")
                 assert sr == 16000, (speech_f, "sr", sr)
                 speech = fast_trim_zeros(speech)
                 if len(speech) < sr * SPEECH_LEN_THRESHOLD:
@@ -772,13 +770,14 @@ def randmix(rand_seed, target, clean_files, log=False, perf=True):
         log(speech_f)
 
     if target in {"denoise", "both"}:
-        if len(fast_trim_zeros(speech)) and np_proba(rand, 1 / 5):
-            log("no noise")
-            noise = np.zeros_like(speech)
-        else:
+#         no noise is already handled by the random noise gain below
+#         if len(fast_trim_zeros(speech)) and np_proba(rand, 1 / 5):
+#             log("no noise")
+#             noise = np.zeros_like(speech)
+#         else:
             noise_f = np_choice(rand, dns_noise_files)
             log(noise_f)
-            noise, sr = librosa.load(noise_f, sr=None, dtype="float64")
+            noise, sr = librosa.load(noise_f, sr=16000 if resample_ok else None, res_type="kaiser_fast", dtype="float64")
             assert sr == 16000, (noise_f, "sr", sr)
             noise = safe_peaknorm(noise)
 
@@ -790,13 +789,13 @@ def randmix(rand_seed, target, clean_files, log=False, perf=True):
     if target == "dereverb" or np_proba(rand, 4 / 5):
         if target == "both" and np_proba(rand, 3 / 5):
             log("IR on speech and noise")
-            ref_ir, speech_ir, noise_ir = loadrandir(rand, 16000, augment=True, n=2, log=log)
+            ref_ir, speech_ir, noise_ir = loadrandir(rand, 16000, augment=True, n=2, resample_ok=resample_ok, log=log)
             speech_x = scipy.signal.convolve(speech, speech_ir, "valid")
             speech_y = convolve_direct(16000, speech, ref_ir)[-len(speech_x) :]
             noise_x = scipy.signal.convolve(noise, noise_ir, "valid")
         elif target in {"dereverb", "both"}:
             log("IR on speech only")
-            ref_ir, speech_ir = loadrandir(rand, 16000, augment=True, n=1, log=log)
+            ref_ir, speech_ir = loadrandir(rand, 16000, augment=True, n=1, resample_ok=resample_ok, log=log)
             speech_x = scipy.signal.convolve(speech, speech_ir, "valid")
             speech_y = convolve_direct(16000, speech, ref_ir)[-len(speech_x) :]
             if target  == "both":
@@ -841,10 +840,12 @@ def randmix(rand_seed, target, clean_files, log=False, perf=True):
     # TODO: normalize noise as well?
     speech_x = normalize_rms(speech_x, -20)
     speech_y = normalize_rms(speech_y, -20)
+    noise_x = normalize_rms(noise_x, -20)
 
     if np_proba(rand, 1 / 20):
         log("clipping")
-        speech_x, noise_x, speech_y = rand_clipping(rand, 0.99, 1, speech_x, noise_x, speech_y)
+        #speech_x, noise_x, speech_y = rand_clipping(rand, 0.99, 1, speech_x, noise_x, speech_y)
+        speech_x, noise_x = rand_clipping(rand, 0.99, 1, speech_x, noise_x)
 
     assert "float64" in str(speech_x.dtype)
     if target in {"denoise", "both"}:
@@ -856,8 +857,10 @@ def randmix(rand_seed, target, clean_files, log=False, perf=True):
         # TODO: Use rms here instead?
         r = librosa.db_to_amplitude(
             librosa.amplitude_to_db(sw).min() - librosa.amplitude_to_db(nw).min()
-        ) * rand.uniform(0.03, 0.1)
-        log("r", r, noise_x.min())
+        )
+        rg = rand.uniform(0.002, 0.015)
+        log("r, rg", r, rg, r * rg)
+        r *= rg
         noise_xr = (r + 1e-20) * (noise_x + 1e-20)
     else:
         noise_xr = np.zeros_like(speech_x)
