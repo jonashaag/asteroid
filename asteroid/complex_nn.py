@@ -25,13 +25,24 @@ from .filterbanks import transforms
 # `.is_complex()` returns True on these tensors.
 ComplexTensor = torch.Tensor
 
+def real(x):
+    return x[..., 0]
+
+def imag(x):
+    return x[..., 1]
+
 
 def is_torch_complex(x):
+    return transforms.is_torchaudio_complex(x)
     return x.is_complex()
 
 
 def torch_complex_from_magphase(mag, phase):
     return as_torch_complex((mag * torch.cos(phase), mag * torch.sin(phase)))
+    with torch.cuda.amp.autocast(False):
+        mag = mag.float()
+        phase = phase.float()
+        return as_torch_complex((mag * torch.cos(phase), mag * torch.sin(phase)))
 
 
 def as_torch_complex(x, asteroid_dim=-2):
@@ -49,7 +60,7 @@ def as_torch_complex(x, asteroid_dim=-2):
         ValueError: If type of `x` is not understood.
     """
     if isinstance(x, (list, tuple)) and len(x) == 2:
-        return torch.view_as_complex(torch.stack(x, dim=-1))
+        return torch.stack(x, dim=-1)
     elif is_torch_complex(x):
         return x
     else:
@@ -61,9 +72,9 @@ def as_torch_complex(x, asteroid_dim=-2):
                 "Asteroid-style complex. PyTorch complex conversion is ambiguous."
             )
         elif is_torchaudio_complex:
-            return torch.view_as_complex(x)
+            return x
         elif is_asteroid_complex:
-            return torch.view_as_complex(transforms.to_torchaudio(x, asteroid_dim))
+            return transforms.to_torchaudio(x, asteroid_dim)
         else:
             raise ValueError(
                 f"Do not know how to convert tensor of shape {x.shape}, dtype={x.dtype} to complex"
@@ -81,7 +92,7 @@ def on_reim(f):
 
     @functools.wraps(f)
     def cf(x):
-        return as_torch_complex((f(x.real), f(x.imag)))
+        return as_torch_complex((f(real(x)), f(imag(x))))
 
     # functools.wraps keeps the original name of `f`, which might be confusing,
     # since we are creating a new function that behaves differently.
@@ -105,7 +116,7 @@ class OnReIm(nn.Module):
         self.im_module = module_cls(*args, **kwargs)
 
     def forward(self, x):
-        return as_torch_complex((self.re_module(x.real), self.im_module(x.imag)))
+        return as_torch_complex((self.re_module(real(x)), self.im_module(imag(x))))
 
 
 class ComplexMultiplicationWrapper(nn.Module):
@@ -130,8 +141,8 @@ class ComplexMultiplicationWrapper(nn.Module):
     def forward(self, x: ComplexTensor) -> ComplexTensor:
         return as_torch_complex(
             (
-                self.re_module(x.real) - self.im_module(x.imag),
-                self.re_module(x.imag) + self.im_module(x.real),
+                self.re_module(real(x)) - self.im_module(imag(x)),
+                self.re_module(imag(x)) + self.im_module(real(x)),
             )
         )
 
@@ -171,9 +182,9 @@ def bound_complex_mask(mask: ComplexTensor, bound_type="tanh"):
     if bound_type in {"BDSS", "sigmoid"}:
         return on_reim(torch.sigmoid)(mask)
     elif bound_type in {"BDT", "tanh", "UBD", None}:
-        mask_mag, mask_phase = torchaudio.functional.magphase(torch.view_as_real(mask))
-        #mask_mag = mask.abs()
-        #mask_phase = mask.angle()
+        mask_mag = (mask**2).sum(dim=-1).sqrt()
+        with torch.cuda.amp.autocast(False):
+            mask_phase = mask.float()[...,1].atan2(mask.float()[...,0])
         if bound_type in {"BDT", "tanh"}:
             mask_mag_bounded = torch.tanh(mask_mag)
         else:

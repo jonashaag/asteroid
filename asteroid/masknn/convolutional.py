@@ -428,6 +428,8 @@ class DCUNetComplexEncoderBlock(nn.Module):  # CHECK-JIT
 
     def forward(self, x: complex_nn.ComplexTensor):
         return self.activation(self.norm(self.conv(x)))
+        with torch.cuda.amp.autocast(False):
+            return self.activation(self.norm(self.conv(x.float())))
 
 
 class DCUNetComplexDecoderBlock(nn.Module):  # CHECK-JIT
@@ -482,6 +484,8 @@ class DCUNetComplexDecoderBlock(nn.Module):  # CHECK-JIT
 
     def forward(self, x: complex_nn.ComplexTensor):
         return self.activation(self.norm(self.deconv(x)))
+        with torch.cuda.amp.autocast(False):
+            return self.activation(self.norm(self.deconv(x.float())))
 
 
 class DCUMaskNet(BaseDCUMaskNet):  # CHECK-JIT

@@ -533,16 +533,19 @@ class DCCRMaskNetRNN(nn.Module):  # CHECK-JIT
         self.norm = norms.get_complex(norm_type)
 
     def forward(self, x: complex_nn.ComplexTensor):
-        """Input shape: [batch, ..., time]"""
-        # Permute to [batch, time, ...]
-        x = x.permute(0, x.ndim - 1, *range(1, x.ndim - 1))
-        # RNN + Linear expect [batch, time, rest]
-        x = self.linear(self.rnn(x.reshape(*x.shape[:2], -1))).reshape(*x.shape)
-        # Permute back to [batch, ..., time]
-        x = x.permute(0, *range(2, x.ndim), 1)
-        if self.norm is not None:
-            x = self.norm(x)
-        return x
+        #with torch.cuda.amp.autocast(False):
+        #    x = x.float()
+        if 1:
+            """Input shape: [batch, ..., time, 2]"""
+            # Permute to [batch, time, ..., 2]
+            x = x.permute(0, x.ndim - 2, *range(1, x.ndim - 2), -1)
+            # RNN + Linear expect [batch, time, rest, 2]
+            x = self.linear(self.rnn(x.reshape(*x.shape[:2], -1, 2))).reshape(*x.shape)
+            # Permute back to [batch, ..., time, 2]
+            x = x.permute(0, *range(2, x.ndim - 1), 1, -1)
+            if self.norm is not None:
+                x = self.norm(x)
+            return x
 
 
 class DCCRMaskNet(BaseDCUMaskNet):  # CHECK-JIT

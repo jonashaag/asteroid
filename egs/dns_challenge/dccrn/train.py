@@ -40,6 +40,7 @@ parser.add_argument("--exp_dir", default="exp/tmp", help="Full path to save best
 
 
 def sisdr(e, t):
+    #return (e-t).abs().mean()
     return singlesrc_neg_sisdr(e.squeeze(1), t.squeeze(1)).mean()
 
 
@@ -254,12 +255,13 @@ def main(conf):
     gpus = -1 if torch.cuda.is_available() else None
     # assert torch.cuda.is_available()
     ckpt = f"{exp_dir}/last.ckpt"
-    if os.path.exists(ckpt):
+    if 0 and os.path.exists(ckpt):
         print("*** NOTE: Resuming from last.ckpt")
     else:
         print("*** NOTE: Starting from scratch (no checkpoint)")
         ckpt = None
     trainer = pl.Trainer(
+        precision=16,
         # weights_summary='full',
         callbacks=callbacks,
         max_epochs=conf["training"]["epochs"],
@@ -310,5 +312,5 @@ if __name__ == "__main__":
     # the attributes in an non-hierarchical structure. It can be useful to also
     # have it so we included it here but it is not used.
     arg_dic, plain_args = parse_args_as_dict(parser, return_plain_args=True)
-    pprint(arg_dic)
+    #pprint(arg_dic)
     main(arg_dic)
