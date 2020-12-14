@@ -18,6 +18,7 @@ class STFTFB(Filterbank):
     Attributes:
         n_feats_out (int): Number of output filters.
     """
+
     def __init__(self, n_filters, kernel_size, stride=None, window=None,
                  **kwargs):
         super(STFTFB, self).__init__(n_filters, kernel_size, stride=stride)

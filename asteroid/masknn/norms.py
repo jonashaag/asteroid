@@ -141,3 +141,8 @@ def get(identifier):
     else:
         raise ValueError('Could not interpret normalization identifier: ' +
                          str(identifier))
+
+
+def get_complex(identifier):
+    """Like `.get` but returns a complex norm created with `asteroid.complex_nn.OnComponents`."""
+    return complex_nn.OnComponents(get(identifier))

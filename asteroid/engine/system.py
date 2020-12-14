@@ -17,32 +17,27 @@ class System(pl.LightningModule):
             (est_targets, targets).
         train_loader (torch.utils.data.DataLoader): Training dataloader.
         val_loader (torch.utils.data.DataLoader): Validation dataloader.
+        datamodule (pl.LightningDataModule): Data module
         scheduler (torch.optim.lr_scheduler._LRScheduler): Instance, or list
             of learning rate schedulers.
         config: Anything to be saved with the checkpoints during training.
-            The config dictionary to re-instantiate the run for example.
+            The config dictionary to re-instantiate the run for example. TODO
     .. note:: By default, `training_step` (used by `pytorch-lightning` in the
         training loop) and `validation_step` (used for the validation loop)
         share `common_step`. If you want different behavior for the training
         loop and the validation loop, overwrite both `training_step` and
         `validation_step` instead.
     """
-    def __init__(self, model, optimizer, loss_func, train_loader,
-                 val_loader=None, scheduler=None, config=None):
+    def __init__(self, model, optimizer, loss_func, train_loader=None,
+                 val_loader=None, datamodule=None, scheduler=None):#TODO, config=None):
         super().__init__()
         self.model = model
         self.optimizer = optimizer
         self.loss_func = loss_func
         self.train_loader = train_loader
         self.val_loader = val_loader
+        self.datamodule = datamodule
         self.scheduler = scheduler
-        config = {} if config is None else config
-        self.config = config
-        # hparams will be logged to Tensorboard as text variables.
-        # torch doesn't support None in the summary writer for now, convert
-        # None to strings temporarily.
-        # See https://github.com/pytorch/pytorch/issues/33140
-        self.hparams = Namespace(**self.config_to_hparams(config))
 
     def forward(self, *args, **kwargs):
         """ Applies forward pass of the model.
@@ -163,7 +158,8 @@ class System(pl.LightningModule):
 
     def on_save_checkpoint(self, checkpoint):
         """ Overwrite if you want to save more things in the checkpoint."""
-        checkpoint['training_config'] = self.config
+        # TODO
+        #checkpoint['training_config'] = self.config
         return checkpoint
 
     def on_batch_start(self, batch):
@@ -181,23 +177,3 @@ class System(pl.LightningModule):
     def on_epoch_end(self):
         """ Overwrite if needed. Called by pytorch-lightning"""
         pass
-
-    @staticmethod
-    def config_to_hparams(dic):
-        """ Sanitizes the config dict to be handled correctly by torch
-        SummaryWriter. It flatten the config dict, converts `None` to
-         ``'None'`` and any list and tuple into torch.Tensors.
-
-        Args:
-            dic (dict): Dictionary to be transformed.
-
-        Returns:
-            dict: Transformed dictionary.
-        """
-        dic = flatten_dict(dic)
-        for k, v in dic.items():
-            if v is None:
-                dic[k] = str(v)
-            elif isinstance(v, (list, tuple)):
-                dic[k] = torch.Tensor(v)
-        return dic

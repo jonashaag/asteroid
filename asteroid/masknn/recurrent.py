@@ -342,3 +342,14 @@ class DPRNN(nn.Module):
             'dropout': self.dropout
         }
         return config
+
+
+class DCCRNMaskNet(nn.Module):
+    def __init__(self, lstm_hidden_size, lstm_dense_size, encoders, decoders, norm_type="bN"):
+        super().__init__()
+        self.encoders = nn.ModuleList([DCUNetComplexEncoderBlock(*args) for args in encoders])
+        last_encoder_out_chans = encoders[-1][1]
+        print(self.encoders[-1].shape)
+        self.rnn = SingleRNN("lstm", last_encoder_out_chans, lstm_hidden_size)
+        self.dense = nn.Linear(lstm_hidden_size, lstm_dense_size)
+        self.decoders = nn.ModuleList([DCUNetComplexDecoderBlock(*args) for args in decoders])

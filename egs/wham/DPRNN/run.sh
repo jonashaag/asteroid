@@ -57,7 +57,8 @@ eval_use_gpu=1
 
 sr_string=$(($sample_rate/1000))
 suffix=wav${sr_string}k/$mode
-dumpdir=data/$suffix  # directory to put generated json file
+dumpdir=~/Downloads/all_json/$suffix  # directory to put generated json file
+
 
 train_dir=$dumpdir/tr
 valid_dir=$dumpdir/cv
@@ -105,7 +106,7 @@ if [[ $stage -le 3 ]]; then
 		--task $task \
 		--sample_rate $sample_rate \
 		--lr $lr \
-		--epochs $epochs \
+		--max_epochs $epochs \
 		--batch_size $batch_size \
 		--num_workers $num_workers \
 		--optimizer $optimizer \
@@ -114,7 +115,7 @@ if [[ $stage -le 3 ]]; then
 		--stride $stride \
 		--chunk_size $chunk_size \
 		--hop_size $hop_size \
-		--exp_dir ${expdir}/ | tee logs/train_${tag}.log
+		--exp_dir ${expdir}/# | tee logs/train_${tag}.log
 	cp logs/train_${tag}.log $expdir/train.log
 
 	# Get ready to publish
@@ -128,6 +129,6 @@ if [[ $stage -le 4 ]]; then
 		--task $task \
 		--test_dir $test_dir \
 		--use_gpu $eval_use_gpu \
-		--exp_dir ${expdir} | tee logs/eval_${tag}.log
+		--exp_dir ${expdir}# | tee logs/eval_${tag}.log
 	cp logs/eval_${tag}.log $expdir/eval.log
 fi

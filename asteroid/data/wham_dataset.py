@@ -1,121 +1,202 @@
+import abc
 import torch
+import uuid
 from torch.utils import data
 import json
 import os
 import numpy as np
+import functools
 import soundfile as sf
 from .wsj0_mix import wsj0_license
+import dataclasses
+from pathlib import Path
+from typing import List, Union, Literal, Generic, TypeVar, Optional, Any, Type
+import pytorch_lightning as pl
+import asteroid
+
+PathOrStr = Union[Path, str]
+
 EPS = 1e-8
 
-DATASET = 'WHAM'
-# WHAM tasks
-enh_single = {'mixture': 'mix_single',
-              'sources': ['s1'],
-              'infos': ['noise'],
-              'default_nsrc': 1}
-enh_both = {'mixture': 'mix_both',
-            'sources': ['mix_clean'],
-            'infos': ['noise'],
-            'default_nsrc': 1}
-sep_clean = {'mixture': 'mix_clean',
-             'sources': ['s1', 's2'],
-             'infos': [],
-             'default_nsrc': 2}
-sep_noisy = {'mixture': 'mix_both',
-             'sources': ['s1', 's2'],
-             'infos': ['noise'],
-             'default_nsrc': 2}
-
-WHAM_TASKS = {'enhance_single': enh_single,
-              'enhance_both': enh_both,
-              'sep_clean': sep_clean,
-              'sep_noisy': sep_noisy}
-# Aliases.
-WHAM_TASKS['enh_single'] = WHAM_TASKS['enhance_single']
-WHAM_TASKS['enh_both'] = WHAM_TASKS['enhance_both']
+WHAM_TASKS = {
+    "enh_single": {
+        "mixture": "mix_single",
+        "sources": ["s1"],
+        "infos": ["noise"],
+        "default_nsrc": 1,
+        "uses_wham": True,
+    },
+    "enh_both": {
+        "mixture": "mix_both",
+        "sources": ["mix_clean"],
+        "infos": ["noise"],
+        "default_nsrc": 1,
+        "uses_wham": True,
+    },
+    "sep_clean": {
+        "mixture": "mix_clean",
+        "sources": ["s1", "s2"],
+        "infos": [],
+        "default_nsrc": 2,
+        "uses_wham": False,
+    },
+    "sep_noisy": {
+        "mixture": "mix_both",
+        "sources": ["s1", "s2"],
+        "infos": ["noise"],
+        "default_nsrc": 2,
+        "uses_wham": False,
+    },
+}
 
 
 def normalize_tensor_wav(wav_tensor, eps=1e-8, std=None):
+    # TODO: move this
     mean = wav_tensor.mean(-1, keepdim=True)
     if std is None:
         std = wav_tensor.std(-1, keepdim=True)
     return (wav_tensor - mean) / (std + eps)
 
 
-class WhamDataset(data.Dataset):
-    """ Dataset class for WHAM source separation and speech enhancement tasks.
+MixMode = Literal["min", "max"]
+Task = Literal["enh_single", "enh_both", "sep_clean", "sep_noisy"]
+Stage = Literal["fit", "test"]
 
-    Args:
-        json_dir (str): The path to the directory containing the json files.
-        task (str): One of ``'enh_single'``, ``'enh_both'``, ``'sep_clean'`` or
-            ``'sep_noisy'``.
 
-            * ``'enh_single'`` for single speaker speech enhancement.
-            * ``'enh_both'`` for multi speaker speech enhancement.
-            * ``'sep_clean'`` for two-speaker clean source separation.
-            * ``'sep_noisy'`` for two-speaker noisy source separation.
 
-        sample_rate (int, optional): The sampling rate of the wav files.
-        segment (float, optional): Length of the segments used for training,
-            in seconds. If None, use full utterances (e.g. for test).
-        nondefault_nsrc (int, optional): Number of sources in the training
-            targets.
-            If None, defaults to one for enhancement tasks and two for
-            separation tasks.
-        normalize_audio (bool): If True then both sources and the mixture are
-            normalized with the standard deviation of the mixture.
-    """
-    dataset_name = 'WHAM!'
 
-    def __init__(self, json_dir, task, sample_rate=8000, segment=4.0,
-                 nondefault_nsrc=None, normalize_audio=False):
-        super(WhamDataset, self).__init__()
-        if task not in WHAM_TASKS.keys():
-            raise ValueError('Unexpected task {}, expected one of '
-                             '{}'.format(task, WHAM_TASKS.keys()))
-        # Task setting
-        self.json_dir = json_dir
-        self.task = task
-        self.task_dict = WHAM_TASKS[task]
-        self.sample_rate = sample_rate
-        self.normalize_audio = normalize_audio
-        self.seg_len = None if segment is None else int(segment * sample_rate)
-        if not nondefault_nsrc:
-            self.n_src = self.task_dict['default_nsrc']
+@dataclasses.dataclass
+class TrainConfig:
+    batch_size: int = 42
+    # TODO: auto generate these from Trainer.__init__?
+    # Include more params?
+    max_epochs: int = 200
+    num_workers: int = 4
+    early_stop: bool = True
+    early_stop_patience: int = 30
+    gradient_clipping: int = 5
+    half_lr: bool = True
+    optimizer: str = "adam"
+    optimizer_config: Optional[dict] = None
+    loss: str = "pairwise_neg_sisdr"
+    n_checkpoints: int = 5
+
+
+@dataclasses.dataclass
+class DatasetConfig:
+    sample_rate: int = 8000
+    normalize_audio: bool = False
+    segment: float = 4.0
+    mode: MixMode = "min"
+
+    @property
+    def segment_len(self):
+        # TODO: bring back test mode
+        if self.segment is not None:
+            return int(self.segment * self.sample_rate)
         else:
-            assert nondefault_nsrc >= self.task_dict['default_nsrc']
-            self.n_src = nondefault_nsrc
-        self.like_test = self.seg_len is None
-        # Load json files
-        mix_json = os.path.join(json_dir, self.task_dict['mixture'] + '.json')
-        sources_json = [os.path.join(json_dir, source + '.json') for
-                        source in self.task_dict['sources']]
-        with open(mix_json, 'r') as f:
-            mix_infos = json.load(f)
-        sources_infos = []
-        for src_json in sources_json:
-            with open(src_json, 'r') as f:
-                sources_infos.append(json.load(f))
-        # Filter out short utterances only when segment is specified
-        orig_len = len(mix_infos)
-        drop_utt, drop_len = 0, 0
-        if not self.like_test:
-            for i in range(len(mix_infos) - 1, -1, -1):  # Go backward
-                if mix_infos[i][1] < self.seg_len:
-                    drop_utt += 1
-                    drop_len += mix_infos[i][1]
-                    del mix_infos[i]
-                    for src_inf in sources_infos:
-                        del src_inf[i]
+            return None
 
-        print("Drop {} utts({:.2f} h) from {} (shorter than {} samples)".format(
-            drop_utt, drop_len/sample_rate/36000, orig_len, self.seg_len))
-        self.mix = mix_infos
+
+@dataclasses.dataclass
+class WhamConfig(DatasetConfig):
+    # TODO: remove default values here when https://github.com/python/cpython/pull/17322 is merged
+    task: Task = "sep_clean"
+    train_dir: Path = Path("")
+    valid_dir: Path = Path("")
+
+    def __post_init__(self, *args, **kwargs):
+        self.task_info = WHAM_TASKS[self.task]
+
+
+D = TypeVar("D", bound=DatasetConfig)
+
+@dataclasses.dataclass
+class ModelConfig:
+    pass
+
+
+M = TypeVar("M", bound=ModelConfig)
+
+
+class Model(abc.ABC, Generic[M]):
+    @abc.abstractmethod
+    def __init__(self, config: M):
+        pass
+
+class Dataset(abc.ABC, data.Dataset, Generic[D]):
+    @abc.abstractmethod
+    def __init__(self, config: D, stage: Stage):
+        pass
+
+
+@dataclasses.dataclass
+class ExperimentConfig(Generic[D, M]):
+    tag: str
+    train_config: TrainConfig
+    dataset: Type[Dataset[D]]
+    dataset_config: D
+    model: Type[Model[M]]
+    model_config: M
+
+    def __post_init__(self, *args, **kwargs):
+        # TODO: use dataclasses.field(...) for tag once https://github.com/python/cpython/pull/17322 is merged
+        if not self.tag:
+            # TODO: change to run.sh ID generator
+            self.tag = uuid.uuid4().hex
+
+
+
+
+
+class WhamDataset(Dataset[WhamConfig]):
+    """Dataset class for WHAM source separation and speech enhancement tasks."""
+
+    dataset_name = "WHAM!"
+
+    def __init__(self, config: WhamConfig, stage: Stage):
+        # TODO: bring nach nondefault_nsrc
+        # TODO: do away with for_train
+        super(WhamDataset, self).__init__()
+        self.config = config
+
+        data_dir = (
+            self.config.train_dir if self.stage == "fit" else self.config.valid_dir
+        )
+        mixture_info = json.load(data_dir.joinpath(["mixture"] + ".json").open())
+        source_infos = [
+            json.load(data_dir.joinpath(source + ".json").open())
+            for source in self.config.task_info["sources"]
+        ]
         # Handle the case n_src > default_nsrc
-        while len(sources_infos) < self.n_src:
-            sources_infos.append([None for _ in range(len(self.mix))])
-        self.sources = sources_infos
+        # while len(sources_infos) < self.n_src:
+        #    sources_infos.append([None for _ in range(len(self.mix))])
 
+        self.utterances = [
+            (n_samples, mix_path, [src_path for src_path, _ in sources])
+            for (mix_path, n_samples), *sources in zip(mixture_info, *source_infos)
+            if n_samples >= self.config.segment_len
+        ]
+
+        drop_len = len(mixture_info) - len(self.utterances)
+        dropped_hours = (
+            sum(
+                n_samples
+                for _, n_samples in mixture_info
+                if n_samples < self.config.segment_len
+            )
+            / self.config.sample_rate
+            / 3600
+        )
+        print(
+            f"Dropping {drop_len}/{len(mixture_info)} utts ({dropped_hours:.2f} h) that are shorter than {self.config.segment_len} samples"
+        )
+
+    @property
+    def n_src(self):
+        return len(self.utterances[0][2])
+
+    """TODO: this is broken, __add__ shouldn't mutate
     def __add__(self, wham):
         if self.n_src != wham.n_src:
             raise ValueError('Only datasets having the same number of sources'
@@ -127,9 +208,10 @@ class WhamDataset(data.Dataset):
                   'passed one the smallest to the sum.')
         self.mix = self.mix + wham.mix
         self.sources = [a + b for a, b in zip(self.sources, wham.sources)]
+    """
 
     def __len__(self):
-        return len(self.mix)
+        return len(self.utterances)
 
     def __getitem__(self, idx):
         """ Gets a mixture/sources pair.
@@ -137,36 +219,37 @@ class WhamDataset(data.Dataset):
             mixture, vstack([source_arrays])
         """
         # Random start
-        if self.mix[idx][1] == self.seg_len or self.like_test:
-            rand_start = 0
-        else:
-            rand_start = np.random.randint(0, self.mix[idx][1] - self.seg_len)
-        if self.like_test:
-            stop = None
-        else:
-            stop = rand_start + self.seg_len
-        # Load mixture
-        x, _ = sf.read(self.mix[idx][0], start=rand_start,
-                       stop=stop, dtype='float32')
-        seg_len = torch.as_tensor([len(x)])
-        # Load sources
-        source_arrays = []
-        for src in self.sources:
-            if src[idx] is None:
-                # Target is filled with zeros if n_src > default_nsrc
-                s = np.zeros((seg_len, ))
-            else:
-                s, _ = sf.read(src[idx][0], start=rand_start,
-                               stop=stop, dtype='float32')
-            source_arrays.append(s)
-        sources = torch.from_numpy(np.vstack(source_arrays))
-        mixture = torch.from_numpy(x)
+        # TODO: bring back test mode
+        n_samples, mix_path, src_paths = self.utterances[idx]
+        rand_start = np.random.randint(0, max(1, n_samples - self.config.segment_len))
+        stop = rand_start + self.config.segment_len
 
-        if self.normalize_audio:
-            m_std = mixture.std(-1, keepdim=True)
-            mixture = normalize_tensor_wav(mixture, eps=EPS, std=m_std)
-            sources = normalize_tensor_wav(sources, eps=EPS, std=m_std)
-        return mixture, sources
+        if 0:
+            # Load mixture
+            mixture, _ = sf.read(mix_path, start=rand_start, stop=stop, dtype="float32")
+            # Load sources
+            sources = [
+                sf.read(src_path, start=rand_start, stop=stop, dtype="float32")[0]
+                for src_path in src_paths
+            ]
+        else:
+            mixture = np.zeros((self.config.segment_len,))
+            sources = [np.zeros_like(mixture) for _ in src_paths]
+        # if src[idx] is None:
+        #    # Target is filled with zeros if n_src > default_nsrc
+        #    s = np.zeros((seg_len, ))
+
+        mixture_tensor = torch.from_numpy(mixture)
+        source_tensors = torch.from_numpy(np.vstack(sources))
+
+        if self.config.normalize_audio:
+            m_std = mixture_tensor.std(-1, keepdim=True)
+            return (
+                normalize_tensor_wav(mixture_tensors, eps=EPS, std=m_std),
+                normalize_tensor_wav(source_tensors, eps=EPS, std=m_std),
+            )
+        else:
+            return mixture_tensor, source_tensors
 
     def get_infos(self):
         """ Get dataset infos (for publishing models).
@@ -174,23 +257,80 @@ class WhamDataset(data.Dataset):
         Returns:
             dict, dataset infos with keys `dataset`, `task` and `licences`.
         """
-        infos = dict()
-        infos['dataset'] = self.dataset_name
-        infos['task'] = self.task
-        if self.task == 'sep_clean':
-            data_license = [wsj0_license]
-        else:
-            data_license = [wsj0_license, wham_noise_license]
-        infos['licenses'] = data_license
-        return infos
+        return {
+            "dataset": self.dataset_name,
+            "config": self.config,
+            "licenses": [wsj0_license]
+            + ([wham_noise_license] if self.config.task_info["uses_wham"] else []),
+        }
+
+class Experiment: pass
+
+class PlWhamDataModule(pl.LightningDataModule):
+    def __init__(self, experiment: Experiment):
+        super().__init__()
+        self.experiment = experiment
+
+    def train_dataloader(self):
+        return DataLoader(
+            WhamDataset(self.experiment.dataset_config, "fit"),
+            shuffle=True,
+            batch_size=self.experiment.train_config.batch_size,
+            num_workers=self.experiment.train_config.num_workers,
+            drop_last=True,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            WhamDataset(self.experiment.dataset_config, "test"),
+            batch_size=self.experiment.train_config.batch_size,
+            num_workers=self.experiment.train_config.num_workers,
+            drop_last=True,
+        )
+
+    def test_dataloader(self):
+        return DataLoader(
+            WhamDataset(self.experiment.dataset_config, "test"),
+            batch_size=self.experiment.train_config.batch_size,
+            num_workers=self.experiment.train_config.num_workers,
+            drop_last=True,
+        )
 
 
 wham_noise_license = dict(
-    title='The WSJ0 Hipster Ambient Mixtures dataset',
-    title_link='http://wham.whisper.ai/',
-    author='Whisper.ai',
-    author_link='https://whisper.ai/',
-    license='CC BY-NC 4.0',
-    license_link='https://creativecommons.org/licenses/by-nc/4.0/',
+    title="The WSJ0 Hipster Ambient Mixtures dataset",
+    title_link="http://wham.whisper.ai/",
+    author="Whisper.ai",
+    author_link="https://whisper.ai/",
+    license="CC BY-NC 4.0",
+    license_link="https://creativecommons.org/licenses/by-nc/4.0/",
     non_commercial=True,
 )
+
+
+
+
+@dataclasses.dataclass
+class ConvTasNetConfig:
+    # TODO: separate enc/dec, masknn params here?
+    n_src: int = 2
+    out_chan: Optional[int] = None
+    n_blocks: int = 8
+    n_repeats: int = 3
+    bn_chan: int = 128
+    hid_chan: int = 512
+    skip_chan: int = 128
+    conv_kernel_size: int = 3
+    norm_type: str = "gLN"
+    mask_act: str = 'relu'
+    in_chan: Optional[int] = None
+    fb_name: str = 'free'
+    kernel_size: int =16
+    n_filters: int = 512
+    stride: int = 8
+
+
+
+class ConvTasNet(Model[ConvTasNetConfig]):
+    def __init__(self, config: M):
+        pass

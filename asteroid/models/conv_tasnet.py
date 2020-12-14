@@ -1,6 +1,8 @@
 from ..filterbanks import make_enc_dec
 from ..masknn import TDConvNet
 from .base_models import BaseTasNet
+import dataclasses
+from typing import Optional
 
 
 class ConvTasNet(BaseTasNet):
